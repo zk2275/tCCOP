@@ -120,8 +120,8 @@ We apply the proposed methods to predict individualized 60-day in-hospital morta
 
 ## Contact
 
-- Zhiyu Sui — [ZHS66@pitt.edu](mailto:ZHS66@pitt.edu)
 - Zhuodiao Kuang — [zhk22@pitt.edu](mailto:zhk22@pitt.edu)
+- Zhiyu Sui — [ZHS66@pitt.edu](mailto:ZHS66@pitt.edu)
 - Lu Tang — [LUTANG@pitt.edu](mailto:LUTANG@pitt.edu)
 - Ying Ding — [YINGDING@pitt.edu](mailto:YINGDING@pitt.edu)
 
