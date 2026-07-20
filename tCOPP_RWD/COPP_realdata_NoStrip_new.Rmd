@@ -1,0 +1,3535 @@
+---
+title: "tCOPP Real Data Analysis (Patch 7.2)"
+author: "Zhiyu Sui, Zhuodiao Kuang"
+date: '2026-06-16'
+output: pdf_document
+---
+
+<!--
+=== CURRENT STATE (PATCH 9-10) — READ THIS FIRST ===
+The primary evaluation policy is the SMOOTH severity-adaptive (SOFA-graded)
+stochastic policy pi_e(EGDT|X)=expit(beta*(sofa-m)/s), defined in the
+`patch6-define-policy` chunk (Deta_smooth). There is NO hard SOFA>=4 cut and
+NO per-patient splicing anymore: each block makes one constant all-EGDT run
+(_0/_egdt columns, for the constant-policy figure) and one smooth-policy run
+(_1/_smooth columns); the _sofa columns alias the smooth run. The EIF methods
+run multi-split majority vote (method="BootSweight", B=B_MS=20); tCOPP-W is
+single-split. The dated PATCH 2-6 entries below are HISTORICAL and describe the
+old hard-policy/splicing design; where they conflict with this banner, this
+banner wins.
+
+=== PATCH 1 APPLIED — bug fixes (no methodology changes) ===
+1.1  Derive upmc$dead_60 from death_days (after read.csv("UPMCEHRraw.csv")).
+     Prints prevalence after data load — should be ~0.15-0.30; if 0 or 1,
+     death_days encoding is unexpected.
+1.2  Replace upmc$dead with upmc$dead_60 in coverage checks and data frames.
+1.3  Replace simulated `Ytest <- genY_singlestage(Xtest,Dtest)` with
+     `Ytest <- NULL` in real-data EIF blocks. In-block CovProb prints
+     are now meaningless (will print 0); real coverage is computed
+     downstream against upmc$dead_60.
+1.4  Switch active conf.score from "localASR" to "ASR" (V_AR per paper).
+1.5  Fix typo `out_rights0 >= upmc$icu_los` -> `out_rights1 >= ...`
+     (was a copy-paste leftover; only affected the LOS plot, now removed).
+
+=== CLEANUP APPLIED — removed dead code and duplicate runs ===
+Dropped (40 -> 27 chunks, 4003 -> 2506 lines):
+- Dead duplicate `ConformalCI` definition #1 (the live one uses
+  predict.conformalSplit2 and returns r0).
+- All 5 cached `upmcIntv = read.csv(...)` chunks. The pipeline now
+  computes everything from scratch in-memory.
+- CQR mortality variant (was sensitivity, not in paper's main figures).
+- CQR variant for hospital LOS (different outcome).
+- EIF variant for hospital LOS (different outcome).
+- All ICU LOS and Hospital LOS plot blocks (8 chunks).
+
+Snapshot variables added (so plot blocks read in-memory results, not CSVs):
+- upmcIntv_blockA_W      <- snapshot after Block A tCOPP-W
+- upmcIntv_blockA_EIFI   <- snapshot after Block A tCOPP-EIF(I)
+- upmcIntv_blockB        <- snapshot after Block B EIF(I) + EIF(M)
+
+Plot chunks rewritten:
+- plot-block-b: uses upmcIntv_blockB
+- plot-block-a: uses upmcIntv_blockA_W (switch to upmcIntv_blockA_EIFI for EIF panel)
+
+=== INTERNAL SOURCE = NE REGION (DESIGN DECISION) ===
+Both Block A and Block B use NE as the internal source (~412 patients).
+Block A: target-only (no external). Block B: NE internal + SE/W external.
+This makes the comparison apples-to-apples: only difference is whether
+external sources are used. Paper Section 5.2 wording to be updated to
+say "Region 1 (NE)" rather than "all ProCESS".
+
+=== PATCH 2 APPLIED — surface tCOPP-EIF(P) (pooled) ===
+Modified file: multisource_fixed_patch2.Rmd (parallel to multisource_fixed.Rmd).
+Changes in MuSCI_ConformalCI_MuS:
+  - Initialize YBleft_pool / YBright_pool tracking arrays.
+  - Inside the bootstrap B-loop, also rbind PI.pool$lower / PI.pool$upper.
+  - After main combination loop, run the same combination logic on the
+    pool arrays, producing lefts_pool / rights_pool / Lens_pool.
+  - Return list now includes lefts_pool, rights_pool, Lens_pool.
+Changes in this file (COPP_realdata_fixed_patch2.Rmd):
+  - source-multisource chunk now points to multisource_fixed_patch2.Rmd.
+  - library(patchwork) added to load-packages chunk.
+  - In Block B, after each MuSCI_ConformalCI_MuS call, extract pooled
+    intervals as out_lefts_pool0/1, out_rights_pool0/1.
+  - Block B's upmcIntv data frame now includes those four pool columns.
+  - plot-block-b rewritten: three panels side-by-side using patchwork:
+      Panel 1: tCOPP-EIF(I)  from upmcIntv_blockA_EIFI (single-source EIF, NE only)
+      Panel 2: tCOPP-EIF(M)  from upmcIntv_blockB out_lefts1/rights1 (federated)
+      Panel 3: tCOPP-EIF(P)  from upmcIntv_blockB out_lefts_pool1/rights_pool1
+    All three panels show predicted 60-day mortality intervals on UPMC
+    patients under the EGDT evaluation policy (Deta = c(-6, ...)).
+    Diagnostic 2x2 coverage tables printed per method.
+
+=== IMPORTANT CONCEPTUAL FIX (Patch 2 sub-fix) ===
+The original Block B plot mislabeled its two panels as "tCOPP-EIF(I)" vs
+"tCOPP-EIF(M)" — but both panels were tCOPP-EIF(M) under different
+evaluation policies (UC vs EGDT). The paper's intended comparison is
+EIF(I) vs EIF(M) under the SAME policy on the SAME patients. Patch 2's
+plot now does this correctly by sourcing EIF(I) from Block A's snapshot.
+
+=== PATCH 3 APPLIED — return point estimates and overlay them on plots ===
+Modified files: multisource_fixed_patch3.Rmd (parallel) + this file.
+Changes in MuSCI_ConformalCI_MuS and MuSCI_ConformalCI:
+  - Initialize mu_hat_accum tracking matrix (rows = bootstrap iters, cols = patients).
+  - Inside the bootstrap loop, accumulate the test-set conditional mean
+    pred_y0 (or for CQR, the midpoint (pred_y0.lw + pred_y0.up)/2).
+  - After the loop, collapse via colMeans to get a single per-patient mu_hat.
+  - Return list extended to include mu_hat.
+Changes in ConformalCI (used by tCOPP-W):
+  - Same pattern, accumulating Yhat_test instead of pred_y0.
+Changes in this file:
+  - After each analysis call, capture mu_hat0 <- out$mu_hat (UC arm) and
+    mu_hat1 <- out$mu_hat (EGDT arm).
+  - All three upmcIntv data frames now include mu_hat0, mu_hat1 columns.
+  - New chunk `plot-helper` defines make_panel() with point-estimate overlay.
+  - plot-block-b updated: each panel shows interval (color), point estimate
+    (black filled dot), and observed outcome (red X).
+  - plot-block-a rewritten with the same make_panel helper for visual
+    consistency. Two panels: UC arm and EGDT arm of tCOPP-W.
+
+=== KEY DESIGN NOTE for ASR scoring ===
+For the ASR conformal score, the prediction interval is
+  [pred_y0 - rhat, pred_y0 + rhat]
+so the point estimate is EXACTLY the interval midpoint. This means:
+- The point estimate is the same for tCOPP-EIF(I), tCOPP-EIF(M),
+  tCOPP-EIF(P) within Block B (they share the same outcome model;
+  only the conformal cutoff rhat differs).
+- The point estimate WILL differ between Block A's EIF(I) and Block B's
+  EIF(M)/EIF(P) because they use different training subsets.
+This is informative: the methods agree on the prediction, they only
+disagree on the uncertainty.
+
+=== PATCH 3 HOTFIX (Option C) — displayed point = interval midpoint ===
+After running Patch 3 we observed that in Block A's tCOPP-W panels, the
+displayed mu_hat dots sometimes fell visibly OUTSIDE the conformal error
+bars. Cause: with bootstrap aggregation (BootSweight, B=20), the combined
+interval is the majority-vote union of B per-iteration intervals and need
+not be symmetric around the bootstrap-averaged mu_hat — particularly when
+the per-iteration outcome model is unstable (Logistic on NE-only data,
+~412 patients, 19 covariates). Block B's intervals didn't show this
+because the federated/pooled cutoff is wider AND the outcome model
+trains on more patients, making per-iteration predictions more stable.
+
+Fix: in make_panel, the displayed black dot is now the INTERVAL MIDPOINT
+(lwr + upr)/2 rather than mu_hat. By construction the dot is always
+inside the bar, eliminating the visual confusion. mu_hat is still computed
+and stored in upmcIntv for diagnostic use (e.g., calibration analysis).
+The mu_col argument to make_panel is kept for backward compatibility but
+no longer affects what's plotted.
+
+=== PATCH 4 APPLIED — SOFA-thresholded evaluation policy as primary ===
+Modifications to this file only (multisource_fixed_patch4.Rmd is unchanged
+from patch3 except for the Patch 4 changelog header).
+
+New chunk added after data prep (chunk patch4-define-policy):
+  - Defines Deta_sofa: linear predictor = -4.4 * (sofa_total - 3.5),
+    giving pi_e(EGDT|X) ~ 0.90 when SOFA >= 4, ~ 0.10 when SOFA < 4.
+  - Defines Deta_egdt and Deta_uc as the legacy sensitivity policies.
+  - Prints sanity check: SOFA distribution in UPMC, fraction with SOFA >= 4,
+    summary and 1-dp histogram of pi_e(EGDT|X) (should be bimodal).
+
+Each analysis block restructured:
+  - The first run (was Deta = c(-6,...) for all-EGDT) is now Deta = Deta_sofa
+    and constitutes the SOLE primary run.
+  - The second run (was Deta = c(6,...) for all-UC) is wrapped in
+    `if (FALSE) { ... }` so it doesn't execute. The code remains visible
+    for reference. Block runtime is now 1/2 of patch3.
+  - Final upmcIntv data frame uses _sofa-named columns:
+    Block A:  out_lefts_sofa, out_rights_sofa, mu_hat_sofa
+    Block B:  out_lefts_sofa, out_rights_sofa, out_lefts_pool_sofa,
+              out_rights_pool_sofa, mu_hat_sofa
+
+Plot chunks updated:
+  - plot-block-b: same three-panel layout (EIF-I/M/P) but now reads _sofa
+    columns from each snapshot.
+  - plot-block-a: rewritten as TWO panels comparing tCOPP-W vs
+    tCOPP-EIF(I), both under SOFA policy. (The previous "UC arm vs
+    EGDT arm" two-panel layout no longer applies because the SOFA policy
+    is patient-specific.)
+
+Sensitivity stub at end of file: instructions for re-running an analysis
+block under Deta_egdt or Deta_uc as a manual sensitivity check.
+
+=== PATCH 5 APPLIED — color-code SOFA threshold side in plots ===
+make_panel() helper updated:
+  - New optional argument `sofa_high_col` accepts the name of a logical
+    column in the plot data frame indicating SOFA >= 4 status.
+  - When supplied, a colored stripe is drawn just below the x-axis
+    (y in [-0.07, -0.03]): firebrick where sofa_high = TRUE (high severity,
+    EGDT-favored under SOFA policy); gray70 where FALSE (low severity,
+    UC-favored).
+  - ylim extended to [-0.10, 1.02] to make room for the stripe.
+
+plot-block-b and plot-block-a both updated:
+  - plotdat data frames now include a `sofa_high` column derived from
+    `upmc$sofa_total >= 4`.
+  - All make_panel() calls pass sofa_high_col = "sofa_high".
+  - Patchwork-combined plot now has a caption explaining the stripe
+    color, the (former) black dot, and the red X.
+
+=== PATCH 6 APPLIED — hard SOFA policy via splicing, B=1, hide point dot ===
+Modifications to this file only (multisource_fixed_patch6.Rmd is unchanged
+from patch5 except for the changelog header).
+
+Per advisor meeting, three substantive changes:
+
+(1) HIDE displayed point estimate. make_panel no longer draws the black
+    midpoint dot. mu_hat is still computed inside the analysis functions
+    and stored in upmcIntv as a diagnostic (and is still used internally
+    for ranking patients within each panel; we just don't draw the dot).
+    The mu_col argument is kept for backward compatibility but unused.
+
+(2) BOOTSTRAP REMOVED. Each analysis block now uses B = 1 with method =
+    "Sweight" instead of B = B_MS = 20 with "BootSweight". Single-split
+    conformal: faster, simpler, and produces symmetric intervals
+    [mu_hat - rhat, mu_hat + rhat] for ASR scoring (no asymmetric
+    aggregation across bootstrap iterations). Conformal validity is
+    unaffected — bootstrap aggregation reduces split-induced noise but
+    isn't required for the coverage guarantee.
+
+(3) HARD SOFA POLICY via splicing. Replace the soft pi_e in {0.1, 0.9}
+    primary with a hard policy: pi_e(EGDT|X) = 1 if SOFA >= 4, else 0.
+    Implemented by running BOTH constant-policy analyses (Deta_egdt and
+    Deta_uc) and splicing per-patient based on sofa_high_idx. This avoids
+    the variance inflation that the soft heterogeneous policy caused on
+    the small Region 1 calibration sample, so EIF(I) intervals should be
+    much tighter than under patch 5.
+
+Each analysis block restructured:
+  - First half: Deta <- Deta_egdt (was Deta_sofa). Saves to *_0 suffix.
+  - Second half: previously wrapped in if(FALSE); now if(TRUE) so it
+    actually runs Deta_uc. Saves to *_1 suffix.
+  - Final upmcIntv data frame includes:
+      * _egdt and _uc columns (raw counterfactual outputs, diagnostic)
+      * _sofa columns (spliced from _0 / _1 by sofa_high_idx)
+  - Plot chunks (unchanged) read _sofa columns -> SOFA-policy figures.
+
+Runtime: each block runs analysis TWICE (once per Deta) -> ~2x patch4
+on its own, but with B=1 instead of B=20 the net runtime is ~10x FASTER
+than patch4 / patch5.
+
+This is the last planned patch.
+
+=== PATCH 6 ADDENDUM ===
+After running and viewing patch 6 results, two small follow-ups:
+  - Removed the "Black dot = interval midpoint" line from the patchwork
+    captions in plot-block-a and plot-block-b, since patch 6 already
+    removed the black-dot geom_point.
+  - Added a new chunk `plot-combined-2x2` that displays all four methods
+    (tCOPP-W, tCOPP-EIF(I), tCOPP-EIF(M), tCOPP-EIF(P)) under the hard
+    SOFA policy in a single 2x2 figure. Top row: single-source methods.
+    Bottom row: multi-source methods. tCOPP-EIF(I) appears once; the
+    EIF(I) panel previously shown in Block B's three-panel plot was
+    always sourcing from upmcIntv_blockA_EIFI (the same single-source
+    EIF estimator), not from a separate Block B fit.
+  - Also commented out six leftover ALOrac[s_nrep] <- mean(... rep(1,5)
+    ...) lines from the simulation code that errored on real-data
+    Xtest dimensions; ALOrac was never read downstream so this is dead
+    code with no functional impact.
+  - Added a sibling chunk `plot-combined-2x2-const` that produces a
+    constant-policy 2x2 figure (pi_e == 1 for all patients) using the
+    _egdt diagnostic columns already in upmcIntv. Same layout and plot
+    helper as the SOFA 2x2 — easy to put the two figures side by side
+    in the paper. Costs zero extra runtime since the _egdt columns are
+    a byproduct of the SOFA splicing analysis.
+Modifications to this file only (multisource_fixed_patch5.Rmd is unchanged
+from patch4 except for the changelog header).
+
+make_panel() helper updated:
+  - New optional argument `sofa_high_col` accepts the name of a logical
+    column in the plot data frame indicating SOFA >= 4 status.
+  - When supplied, a colored stripe is drawn just below the x-axis
+    (y in [-0.07, -0.03]): firebrick where sofa_high = TRUE (high severity,
+    EGDT-favored under SOFA policy); gray70 where FALSE (low severity,
+    UC-favored).
+  - ylim extended to [-0.10, 1.02] to make room for the stripe.
+  - When sofa_high_col = NULL the function behaves as in patch3/4.
+
+plot-block-b and plot-block-a both updated:
+  - plotdat data frames now include a `sofa_high` column derived from
+    `upmc$sofa_total >= 4` (upmc is in scope from the data-load chunk).
+  - All make_panel() calls pass sofa_high_col = "sofa_high".
+  - Patchwork-combined plot now has a caption explaining the stripe
+    color, the black dot (interval midpoint), and the red X (observed
+    outcome).
+
+This is the last planned patch for the real-data analysis. End of patch
+sequence.
+-->
+
+<!--
+=== PATCH 7 APPLIED — code-quality cleanup, mostly no methodology change ===
+
+Patch 7 is a code-quality pass on top of Patch 6. Most changes are purely
+cosmetic / safety; ONE change has a real impact on the outcome model and
+is flagged below. None of the changes alter the SOFA-thresholded policy,
+the splicing logic, or the analysis pipeline structure.
+
+(A) Latent r0 bug fixed in ConformalCI(). r0 was assigned only inside the
+    `weighted == TRUE` branch but referenced in the return list. Initialised
+    to NULL at the top of the function so the return is always well-defined.
+    Real-data calls all set weighted = TRUE, so the bug never bit, but it
+    was a foot-gun for anyone extending the code.
+
+(B) Removed three vestigial `if (TRUE) { ... }` wrappers around the
+    second-half (UC counterfactual) runs in each analysis block. These were
+    leftovers from Patch 4 (which wrapped them in `if (FALSE)` to skip
+    them) and Patch 6 (which flipped them to `if (TRUE)` to re-enable
+    them). The published version unwraps them entirely.
+
+(C) Clipping Option 2 implemented. The four methods produce intervals on
+    a score scale that can extend below 0 or above 1, even though the
+    outcome is binary. Previously, the plot data frames used clipped
+    intervals (pmin(1, pmax(0, .))) and coverage / average length were
+    computed from those clipped values. Now:
+      - Each plotdat frame holds BOTH clipped columns (for plot display)
+        and raw `*_raw` columns (unclipped).
+      - cov_full_* (full-population coverage, computed from the raw columns)
+        and the per-method average length (computed on the [0,1]-clipped
+        columns) are now reported directly in each 2x2 panel TITLE as
+        "CP ... , AL ...". The separate combined_summary / const_summary
+        data.frames that previously printed these were removed (Request-3):
+        CP and AL travel with each plot, so the standalone tables only
+        duplicated that information.
+      - A new `clipping-diagnostic` chunk reports, per method, how often
+        clipping changed the interval and the pre/post difference in
+        average length and coverage. Reviewers can see at a glance the
+        size of the clipping effect.
+
+(D) [BEHAVIOR-CHANGING — verify before publishing] Companion file
+    multisource_fixed_patch7.Rmd had duplicate function definitions
+    removed (see its own changelog). One of those removals — the simpler
+    glmnet-only ASR/localASR/CQR chunk — was previously overwriting the
+    binary-aware (SuperLearner-binomial) versions defined above. With
+    the binary outcome dead_60 in {0,1}, the binary-aware path is the
+    one that should run; after the cleanup, it does. If any previously
+    reported figure was produced using the ridge-on-binary path, the
+    Patch 7 numbers will differ. Re-run and compare before relying on
+    Patch 7 outputs for publication.
+
+mu_hat machinery is preserved everywhere (kept as a diagnostic, as
+requested).
+-->
+
+<!--
+=== PATCH 7.2 APPLIED — REVERT of Patches 7 and 7.1 (companion) ===
+
+This is the companion to multisource_fixed_patch7.Rmd's Patch 7.2
+changelog. Read that file's header for the full narrative.
+
+Short version of what happened and what this revert does:
+
+  Patch 7 mis-identified which of two duplicate ASR/localASR/CQR
+  definitions was the active one. R overwrites top-to-bottom, so the
+  LATER (ridge-only, glmnet) version was the one running in Patch 6.
+  Patch 7 deleted that one and kept the dead-first (SuperLearner with
+  SL.glm) version. This was an unintended baseline shift, not a
+  cleanup.
+
+  Patch 7.1 added a second learner to the SuperLearner library hoping
+  that elastic-net regularization would calm the destabilized outcome
+  model. It treated the symptom; the underlying baseline shift remained.
+
+  Patch 7.2 reverts BOTH:
+    - In multisource_fixed_patch7.Rmd: restores both ASR/localASR/CQR
+      chunks in their Patch 6 order. The ridge-only chunk wins by
+      overwrite - exactly the Patch 6 behavior.
+    - In this file: reverts the SL library changes. ps.Library and
+      m.Library both restored to "SL.glm" (their Patch 6 values).
+      With the ridge-only score functions restored, SuperLearner is
+      not actually the relevant code path; reverting cleans up the
+      noise that 7.1 added.
+
+KEPT from earlier patches (legitimate code-quality fixes that do NOT
+change the model that runs):
+  - r0 <- NULL initialization in ConformalCI (was uninitialized in some
+    branches).
+  - Removal of the three if (TRUE) { ... } vestigial wrappers around
+    the second-half UC counterfactual runs.
+  - Clipping Option 2: plot data frames keep both raw and clipped
+    columns; coverage and average length computed from raw; plots
+    display clipped.
+  - clipping-diagnostic chunk.
+  - mu-hat-calibration chunk (now serves as a sanity check that the
+    Patch 6 ridge behavior is what is running).
+
+After Patch 7.2, expect the figures and summary tables to match the
+Patch 6 baseline output, with the added benefit that the COPP-file
+code-quality cleanups (r0, if(TRUE), clipping) are still in place.
+
+LESSON: do not delete duplicate function definitions based on which
+one "looks more correct" without first verifying which one is
+actually executing (last definition wins in R).
+-->
+
+
+
+```{r setup-copp, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Setup: Load packages and source the multisource EIF functions
+
+Before running, make sure the following files are in the **same directory** as this `.Rmd`:
+
+- `multisource_fixed_patch7.Rmd` (Patch-7 multisource — duplicate-function cleanup; see its changelog)
+- `process_4Lu_v2.csv` (full ProCESS source data with site info)
+- `siteIDdict20251023.csv` (site ID to region mapping)
+- `UPMCEHRraw.csv` (UPMC EHR target data)
+
+```{r load-packages}
+library(MASS)
+library(numDeriv)
+library(rootSolve)
+library(osqp)
+library(densratio)
+library(dplyr)
+library(glmnet)
+library(quantreg)
+library(randomForest)
+library(SuperLearner)
+library(grf)
+library(gbm)
+library(mice)
+library(ggplot2)
+library(patchwork)  ##### PATCH 2: combine three ggplot panels side-by-side in Block B figure
+```
+
+```{r source-multisource, echo=FALSE}
+# Extract and source MuSCI functions from the multisource Rmd.
+##### PATCH 7: This file requires the Patch 7 version of the multisource
+##### Rmd (duplicate-function cleanup vs patch 6 — see its changelog for
+##### the one behavior-changing item, removal of the simpler glmnet-only
+##### ASR/localASR/CQR chunk that was overwriting the binary-aware path).
+##### Before running this file, open and execute:
+#####     multisource_fixed_patch7.Rmd
+# If you have already extracted them into a standalone .R file, 
+# replace this with: source("multisource_functions_patch7.R")
+# knitr::knit_child("multisource_fixed_patch7.Rmd", quiet = TRUE, envir = environment())
+```
+
+## Function Definitions
+
+## Figure 2
+### genY.R
+```{r}
+genY <- function(X){
+  n <- nrow(X)
+  2 / (1 + exp(-12 * (X[, 1] - 0.5))) * 2 / (1 + exp(-12 * (X[, 2] - 0.5))) + rnorm(n)
+}
+
+genY_singlestage <- function(X,T){
+  n <- length(T)
+  Y <- 1+X[,1]-X[,2]+X[,3]^{3}+exp(X[,4])+T*(3-5*X[,1]+2*X[,2]-3*X[,3]+X[,4])+(1+T)*(1+X[,1]+X[,2]+X[,3]+X[,4])*rnorm(n)
+  return(Y)
+}
+
+genY_twostage <- function(X1,X2,T1,T2){
+  n <- length(T1)
+  Y <- 1+X1+T1*(1-3*(X1-0.2)^{2})+X2+T2*(1-5*(X2-0.4)^{2})+(1+0.5*T1-T1*X1+0.5*T2-T2*X2)*rnorm(n,0,sd=0.4)
+  return(Y)
+  }
+```
+
+
+### conformalCI_transferL_Yscore.R
+```{r}
+predict.conformalSplit2 <- function(Yhat_test,Yscore, wt,wt_test,
+                                   alpha = 0.1,
+                                   wthigh = 20, wtlow = 0.05,type,side){
+    
+    avg_wt <- mean(c(wt, wt_test))
+    wt <- censoring(wt / avg_wt, wthigh, wtlow)
+    wt_test <- censoring(wt_test / avg_wt, wthigh, wtlow)
+   
+    totw <- sum(wt)
+    wt <- wt / totw
+    qt <- (1 + wt_test / totw) * (1 - alpha)
+    qt <- pmin(qt, 1)
+    Yslack <- weightedConformalCutoff(Yscore, wt, qt)
+    
+    if (type == "CQR" && side == "two"){
+        Ylo <- Yhat_test[, 1] - Yslack
+        Yup <- Yhat_test[, 2] + Yslack
+    } else if (type == "mean" && side == "two"){
+        Ylo <- Yhat_test - Yslack
+        Yup <- Yhat_test + Yslack
+    } else if (side == "above"){
+        Ylo <- -Inf
+        Yup <- Yhat_test + Yslack
+    } else if (side == "below"){
+        Ylo <- Yhat_test - Yslack
+        Yup <- Inf
+    }
+    
+    res <- data.frame(lower = Ylo, upper = Yup)
+    return(list(res=res,Yslack=Yslack))
+}
+######################################
+#X,Y,T: X is a matrix, Y is a vector, T is a binary variable 0/1 (behavior policy)
+#Deta: is the parameter vector for target policy
+#Xtest: is the dataframe for test data
+#method: "Sweight"(single weighted,split-and-sample in paper) B=1, "Dweight"(double weighted) B=1, "BootSweight" i.e. B=100, "BootDweight" i.e. B=100 
+#B: resampling times for bootstrap
+#trainprop: proportion of sample for training, including propensity score estimation and regression estimation
+#psfun: propensity score estimation method("Boosting", "RF", "Logistic", "PenLogistic")
+#psparams: parameters for psfun
+#outfun: regression estimation method("quantRF", "quantBoosting", "quantBART")
+#outparams: parameters for outfun
+#quantiles: 0.05,0.95 quantile levels for regression prediction for "CQR"
+#type: conformal quantile regression("CQR") and mean regression("mean")
+#side: "two", "above" and "below" confidence interval with quantile regression 
+#weighted: "TRUE"(estimated weights), "FALSE"(unweighted CQR) or user-specified weights vector for weighted conformal prediction
+#alpha: confidence level
+#wthigh/wtlow: upper and lower bounds for weights
+
+
+ConformalCI <- function(X,Y,T,Deta,Xtest,method,B=1,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test){
+####added wttl as the weight for covariate shift   
+  
+  YBleft <- NULL
+  YBright <- NULL
+  Nts <- NULL
+  ##### PATCH 3: track per-test-patient point estimates (Yhat_test) across
+  ##### bootstrap iterations. For type='mean', Yhat_test IS the interval midpoint.
+  mu_hat_accum <- NULL
+  ##### END PATCH 3 init
+  ##### CLEANUP: initialize r0 to NULL so the return list is well-defined
+  ##### even when weighted!=TRUE (formerly, r0 was set inside the
+  ##### `weighted==TRUE` branch only and could be undefined/stale).
+  r0 <- NULL
+
+  #random sample from binary varibale(A) B times
+  for (b in 1:B) {
+  n <- length(Y)
+  #split samples for training and calibration
+  YY <- Y
+  YY[!T] <- NA
+  T <- as.numeric(!is.na(YY))
+  res <- SampleSplit(YY,trainprop)
+  #res$trainid: index for all training
+  #res$trainid1: index for all training with T=1
+  #!!!need to select T=1 first and then select trainid1
+  #res$trainid0: index for all training with T=0
+  
+  #estimate the propensity score
+  Xtrain <- X[res$trainid, ,drop=FALSE]
+  Ttrain <- T[res$trainid]
+  PSFit_T <- PropScore(Ttrain,Xtrain,psfun, psparams)
+  
+  #estimate weights for testing data
+  ps_T_test <- PSFit_T(Xtest)
+  Xtest <- as.matrix(Xtest)
+  ps_D_test <- exp(cbind(1,Xtest)%*%Deta)/(1+exp(cbind(1,Xtest)%*%Deta))
+  ps_test <- ps_T_test*(1-ps_T_test)/(ps_T_test*(1-ps_D_test)+ps_D_test*(1-ps_T_test)) 
+  
+  
+  #estimate the propensity score for binary A
+  tp_T <- PSFit_T(X)
+  tp_D <- exp(cbind(1,X)%*%Deta)/(1+exp(cbind(1,X)%*%Deta))
+  tp_A <- tp_D*(1-tp_T)/(tp_D*(1-tp_T)+tp_T*(1-tp_D))
+  
+
+    A <- rbinom(n = n, size = 1, prob=tp_A)
+    O <- I(T==A)
+    Nts[b] <- sum(O)
+    #quantile regression fitting after selecting A=T
+    X1 <- X[res$trainid, ,drop=FALSE]
+    Y1 <- Y[res$trainid]
+    #select O=1 from training data
+    ind <- which(O[res$trainid] == 1)
+    Xtrain <- X1[ind, ,drop=FALSE]
+    Ytrain <- Y1[ind]
+    OutputFit <- QuantileReg(Ytrain,Xtrain,outfun,outparams,quantiles)
+    Yhat_test <- OutputFit(Xtest)
+    
+    if(method == "Sweight" | method == "BootSweight"){
+      #data for validation
+      X0 <- X[-res$trainid, ,drop=FALSE]
+      Y0 <- Y[-res$trainid]
+      ind <- which(O[-res$trainid] == 1)
+      Xval <- X0[ind, ,drop=FALSE]
+      Yval <- Y0[ind]
+      ps_T_val <- PSFit_T(as.data.frame(Xval))
+      Yhat_val <- OutputFit(Xval)
+      
+      Xval <- as.matrix(Xval)
+      ps_D_val <- exp(cbind(1,Xval)%*%Deta)/(1+exp(cbind(1,Xval)%*%Deta))
+      ps_val <- ps_T_val*(1-ps_T_val)/(ps_T_val*(1-ps_D_val)+ps_D_val*(1-ps_T_val)) 
+      
+      ####subsample wttl, wttl is for both train and val
+      wttl0 = wttl[-res$trainid]
+      wttl_val = wttl0[ind]
+      
+    
+      }else if(method == "Dweight" | method== "BootDweight"){
+      #regression for validation
+      Xval <- X[-res$trainid, ,drop=FALSE]
+      Yval <- Y[-res$trainid]
+      ps_T_val <- PSFit_T(as.data.frame(Xval))
+      Yhat_val <- OutputFit(Xval)
+      
+      Xval <- as.matrix(Xval)
+      ps_D_val <- exp(cbind(1,Xval)%*%Deta)/(1+exp(cbind(1,Xval)%*%Deta))
+      ps_val <- ps_T_val*(1-ps_T_val)/(ps_T_val*(1-ps_D_val)+ps_D_val*(1-ps_T_val)) 
+      ps_A_val <- ps_D_val*(1-ps_T_val)/(ps_D_val*(1-ps_T_val)+ps_T_val*(1-ps_D_val))
+      ps_A_val[which(T[-res$trainid]==0)] <- 1-ps_A_val[which(T[-res$trainid]==0)]
+      ps_val <- ps_val/ps_A_val
+      
+      #### wttl is for both train and val
+      wttl_val= wttl[-res$trainid]
+    }
+
+    Yscore <- conformalScore(Yval, Yhat_val, type, side)
+
+    #construct the confidence interval by weighted CP
+    if(length(weighted)>1){
+      wt <- weighted[1:n]
+      if(method == "Sweight" | method == "BootSweight"){
+        wt <- wt[-res$trainid]
+        ind <- which(O[-res$trainid] == 1)
+        wt <- wt[ind]
+      }else if(method == "Dweight" | method == "BootDweight"){
+        wt <- wt[-res$trainid]
+        }
+      wt_test <- weighted[-(1:n)]
+      PredInt<- predict.conformalSplit(Yhat_test, Yscore,wt,wt_test,alpha,wthigh,wtlow,type,side)
+    }else if(weighted==TRUE){
+      ####wt <- 1/ps_val
+      ####add wttl, wttl_test
+      wt <- (1/ps_val)*wttl_val
+      wt_test <- (1/ps_test)*wttl_test
+      ####PredInt<- predict.conformalSplit(Yhat_test, Yscore,wt,wt_test,alpha,wthigh,wtlow,type,side)
+      PredInt<- predict.conformalSplit2(Yhat_test, Yscore,wt,wt_test,alpha,wthigh,wtlow,type,side)
+      r0=PredInt$Yslack
+      print(r0)
+      PredInt=PredInt$res
+    }else if(weighted==FALSE){
+      wt <- rep(1,length(ps_val))
+      wt_test <- rep(1,length(ps_test))
+      PredInt<- predict.conformalSplit(Yhat_test, Yscore,wt,wt_test,alpha,wthigh,wtlow,type,side)
+    }
+    
+    YBleft <- rbind(YBleft,PredInt[,1])
+    YBright <- rbind(YBright,PredInt[,2])
+      ##### PATCH 3: accumulate point estimates (Yhat_test) across bootstrap iterations
+      mu_hat_accum <- rbind(mu_hat_accum, as.numeric(Yhat_test))
+      ##### END PATCH 3 rbind
+  } 
+  
+  #if bootstrap used, combine multiple CI to a single one
+  #otherwise, a single CI is produced
+  lefts <- NULL
+  rights <- NULL
+  Lens <- NULL
+  if((B>1) & (method == "BootSweight" | method == "BootDweight")){
+    
+    ntest <- nrow(Xtest)
+    for (j in 1:ntest) {
+      
+      Ys <- c(YBleft[,j],YBright[,j])
+      Ws <- c(rep(1,nrow(YBleft)),rep(1,nrow(YBright)))
+      Ss <- c(rep(1,nrow(YBleft)),rep(0,nrow(YBright)))
+      #tol <- B*(1-gamma)
+      tol <- B/2
+      
+      ind <- order(Ys)
+      Ys <- Ys[ind]
+      Ws <- Ws[ind]
+      Ss <- Ss[ind]
+      count <- 0
+      leftpoints <- NULL
+      rightpoints <- NULL
+      
+      for (i in 1:length(Ys)) {
+        if(Ss[i]==1){
+          count <- count+Ws[i]
+          if((count>tol)&(count-Ws[i]<=tol)){
+            leftpoints <- c(leftpoints,Ys[i])
+          }
+        }else if(Ss[i]==0){
+          if((count>tol)&(count-Ws[i]<=tol)){
+            rightpoints <- c(rightpoints,Ys[i])
+          }
+          count <- count-Ws[i]
+        }
+      }
+      lefts[[j]] <- leftpoints
+      rights[[j]] <- rightpoints
+      Lens[j] <- sum(rightpoints-leftpoints)
+    }
+  }else if((B==1) & (method == "Sweight" | method == "Dweight")){
+    for (j in 1:ntest) {
+    lefts[[j]] <- YBleft[j]
+    rights[[j]] <- YBright[j]
+    Lens[j] <- YBright[j]-YBleft[j]
+    }
+  }
+  
+  ##### PATCH 3: collapse bootstrap-stacked predictions to per-patient point estimate
+  if (!is.null(mu_hat_accum)) {
+    mu_hat <- colMeans(mu_hat_accum, na.rm = TRUE)
+  } else {
+    mu_hat <- NULL
+  }
+  ##### END PATCH 3 mu_hat
+  ##### PATCH 3: include mu_hat in the returned list
+  return(list(lefts=lefts, rights=rights, Lens=Lens, Nts=Nts, r0=r0, mu_hat=mu_hat))
+}
+  
+```
+
+### Calculating wttl for test and val
+```{r}
+######################################
+#X,Y,T: X is a matrix, Y is a vector, T is a binary variable 0/1 (behavior policy)
+#Deta: is the parameter vector for target policy
+#Xtest: is the dataframe for test data
+#method: "Sweight"(single weighted,split-and-sample in paper) B=1, "Dweight"(double weighted) B=1, "BootSweight" i.e. B=100, "BootDweight" i.e. B=100 
+#B: resampling times for bootstrap
+#trainprop: proportion of sample for training, including propensity score estimation and regression estimation
+#psfun: propensity score estimation method("Boosting", "RF", "Logistic", "PenLogistic")
+#psparams: parameters for psfun
+#outfun: regression estimation method("quantRF", "quantBoosting", "quantBART")
+#outparams: parameters for outfun
+#quantiles: 0.05,0.95 quantile levels for regression prediction for "CQR"
+#type: conformal quantile regression("CQR") and mean regression("mean")
+#side: "two", "above" and "below" confidence interval with quantile regression 
+#weighted: "TRUE"(estimated weights), "FALSE"(unweighted CQR) or user-specified weights vector for weighted conformal prediction
+#alpha: confidence level
+#wthigh/wtlow: upper and lower bounds for weights
+
+#library(CVXR)
+delta.tilde.prob <- function(x, alphas) {
+  # x: covariate vecter or matrix including intercep 1
+  # return: the probability of \widetilde{\delta}=1 given x
+  x.alpha <- x %*% alphas
+  prob <- exp(x.alpha)/(1 + exp(x.alpha))
+  return(prob)
+}
+
+####### the functions used for the proposed transfer learner method #######
+cost2 <- function(alphas, x.in.rct, x.in.rwe, N) {
+  # the cost function of the first parametric weighting method
+  part1 <- sum(x.in.rct %*% as.matrix(alphas, length(alphas), 1))
+  part2 <- mean(log(1 + exp(x.in.rwe %*% as.matrix(alphas, length(alphas), 1))))*N
+  return(part2-part1)
+} 
+cost <- function(alphas, x.in.rct, left.hand, N) {
+  # the cost function of the second parametric weighting method
+  right.hand <- apply(x.in.rct / c(delta.tilde.prob(x.in.rct, alphas)), 2, sum)/N
+  diff <- right.hand - left.hand
+  return(sqrt(mean(diff**2)))
+}
+entr_balance <- function(tol, x.in.rct, x.in.rwe) {
+  # the optimization problem for the nonparametric weighting method
+  n <- dim(x.in.rct)[1] 
+  w <- Variable(n)
+  p <- dim(x.in.rct)[2]-1
+  # entr: is the element-wise entropy atom
+  objective <- Maximize(sum(entr(w))) 
+  constraints <- list(w >= 0, sum(w) == 1)
+  for (k in 1:p) {
+    constraints <- c(constraints, abs(sum(w*x.in.rct[,k+1]) - mean(x.in.rwe[,k+1])) <= tol*sd(x.in.rwe[,k+1]))
+    constraints <- c(constraints, abs(sum(w*(x.in.rct[,k+1]**2)) - mean(x.in.rwe[,k+1]**2)) <= tol*sd(x.in.rwe[,k+1]**2)) ## added for the misspecify
+  }
+  prob <- Problem(objective, constraints)
+  w.tilde <- rep(0, n)
+  tryCatch(
+    expr = {
+      result <- suppressWarnings(solve(prob))  
+      w.tilde <- result$getValue(w)
+      if (is.na(w.tilde)[1]) {
+        w.tilde <- rep(0,n)
+      }
+    },
+    error = function(e) {
+      # print("error")
+    }
+  )
+  return(w.tilde)
+}
+weight_tuned_entr <- function(tols, x.in.rct, x.in.rwe, prop=0.5, smps=10) {
+  # Evaluate covariate balance with bootstrap samples to choose tuning parameters: 
+  #   the degree of approximate balance sigma_k
+  n <- dim(x.in.rct)[1]
+  sds <- apply(x.in.rwe, 2, sd)
+  means <- apply(x.in.rwe, 2, mean)
+  sds2 <- apply(x.in.rwe**2, 2, sd)
+  moment2 <- apply(x.in.rwe**2, 2, mean)
+  cov.diff.bars <- c()
+  w.tildes <- matrix(NA, n, length(tols))
+  for (i in 1:length(tols)) {
+    tol <- tols[i]
+    w.tilde <- entr_balance(tol, x.in.rct, x.in.rwe)
+    w.tilde[w.tilde < 0] <- 0 ## the optimization results sometimes return negative weights, so clip them to 0
+    if (sum(w.tilde)==0) {
+      cov.diff.bar <- 1e+10
+    } else {
+      w.tildes[,i] <- w.tilde
+      cov.diffs <- c()
+      for (s in 1:smps) {
+        boot.ind <- sample.int(n, round(prop*n), replace=TRUE)
+        x.in.rct.boot <- x.in.rct[boot.ind,]
+        w.tilde.boot <- w.tilde[boot.ind]
+        cov.diff <- (apply(x.in.rct.boot*w.tilde.boot, 2, sum)/sum(w.tilde.boot) -  means)[-1] / sds[-1] ## remember check this again, should also add 2nd moment diff?
+        cov.diff.moment2 <- (apply(x.in.rct.boot**2*w.tilde.boot, 2, sum)/sum(w.tilde.boot) -  moment2)[-1] / sds2[-1]
+        cov.diffs <- c(cov.diffs, sum((c(cov.diff, cov.diff.moment2))**2)) ## L2 measure
+      }
+      cov.diff.bar <- mean(cov.diffs)
+    }
+    cov.diff.bars <- c(cov.diff.bars, cov.diff.bar)
+  }
+  tuned.tol <- tols[which.min(cov.diff.bars)]
+  if (min(cov.diff.bars) < 1e+10) {
+    return(w.tildes[, which.min(cov.diff.bars)])
+  } else {
+    stop('************ optimization not feasible *****************')
+  }
+}
+
+learn_weights <- function(x.in.rct, x.in.rwe, w.method,  N) {
+  # w.method: 1, 2, 3, 4
+  n <- dim(x.in.rct)[1]
+  p <- dim(x.in.rct)[2] - 1
+  if (w.method == 1) {
+    # unweighted
+    w.tilde <- rep(1, n)
+    w.tilde.rwe <- rep(1, dim(x.in.rwe)[1])
+  } else if (w.method == 2) {
+    # the first parametric weighting method
+    
+      opt2 <- optim(rep(0,p+1), cost2, x.in.rct=x.in.rct, x.in.rwe=x.in.rwe, N=N, method = "Nelder-Mead", control = list(maxit=10000))
+      (alphas.hat2 <- opt2$par)
+      w.tilde <- 1 + 1/(exp(x.in.rct %*% as.matrix(alphas.hat2, length(alphas.hat2), 1)))
+      w.tilde.rwe <- 1 + 1/(exp(x.in.rwe %*% as.matrix(alphas.hat2, length(alphas.hat2), 1)))
+    
+  } else if (w.method == 3) {
+    # the second parametric weighting method
+    left.hand <- apply(x.in.rwe, 2, mean)
+    
+      opt <- optim(rep(0, p+1), cost, x.in.rct=x.in.rct, left.hand=left.hand, N=N, method = "Nelder-Mead", control = list(maxit=10000))
+      (alphas.hat3 <- opt$par)
+      w.tilde <- 1 + 1/(exp(x.in.rct %*% as.matrix(alphas.hat3, length(alphas.hat3), 1)))
+      w.tilde.rwe <- 1 + 1/(exp(x.in.rwe %*% as.matrix(alphas.hat3, length(alphas.hat3), 1)))
+    
+  } else if (w.method == 4) {
+    # nonparametric weighting
+    w.tilde <- weight_tuned_entr(tols=c(0.000, 0.001, 0.002, 0.005, 0.010, 0.020, 0.050, 0.100, 0.200, 0.500, 1.000),
+                                 x.in.rct, x.in.rwe)
+  } else if (w.method == 5) {
+    # the first parametric weighting method with true alphas
+    
+      #opt2 <- optim(rep(0,p+1), cost2, x.in.rct=x.in.rct, x.in.rwe=x.in.rwe, N=N, method = "Nelder-Mead", control = list(maxit=10000))
+      #(alphas.hat2 <- opt2$par)
+    (alphas.hat2 <- c(alphas.true))
+      w.tilde <- 1 + 1/(exp(x.in.rct %*% as.matrix(alphas.hat2, length(alphas.hat2), 1)))
+      w.tilde.rwe <- 1 + 1/(exp(x.in.rwe %*% as.matrix(alphas.hat2, length(alphas.hat2), 1)))
+    
+  } else {
+    stop("Wrong input for weighting method")
+  }
+  ####w.tilde
+  return(list(w.tilde.rct=w.tilde, w.tilde.rwe=w.tilde.rwe))
+}
+
+#wttl_calc<- function(X,Xtest){
+####added wttl as the weight for covariate shift   
+  
+#  wttl <- 1/delta.tilde.prob(X, alphas)
+#  return(wttl)
+#}
+  
+```
+
+### conformal_utils.R
+```{r}
+## weightedConformalCutoff <- function(score, weight, qt){
+##     quantile(score, qt)
+## }
+
+find_inds <- function(a, b){
+    n <- length(a)
+    b <- b - 1e-12
+    ## n + 1 - rank(-c(a, b), ties.method = "first")[-(1:n)] + rank(-b, ties.method = "first")
+    rank(c(a, b), ties.method = "first")[-(1:n)] - rank(b, ties.method = "first") + 1
+}
+
+## weightedConformalCutoff0 <- function(score, weight, qt){
+##     ord <- order(score)
+##     weight <- weight[ord]
+##     score <- score[ord]
+##     cw <- cumsum(weight)
+##     cutoff <- sapply(qt, function(q){
+##         ind <- min(which(cw >= q))
+##         score[ind]
+##     })
+##     return(cutoff)
+## }
+
+weightedConformalCutoff <- function(score, weight, qt){
+    ord <- order(score)
+    weight <- weight[ord]
+    score <- score[ord]
+    cw <- cumsum(weight)
+    inds <- find_inds(cw, qt)    
+    cutoff <- score[inds]
+    return(cutoff)
+}
+
+conformalScore <- function(Y, Yhat, type, side){
+    if (is.vector(Y) || (is.matrix(Y) && ncol(Y) == 1)){
+        if (type == "CQR" && side == "two"){
+            score <- pmax(Yhat[, 1] - Y, Y - Yhat[, 2])
+        } else if (type == "mean" && side == "two"){
+            score <- abs(Yhat - Y)
+        } else if (side == "above"){
+            score <- Y - Yhat
+        } else if (side == "below"){
+            score <- Yhat - Y
+        }
+    } else if (is.matrix(Y) && ncol(Y) == 2){
+        score <- pmax(Yhat[, 1] - Y[, 1], Y[, 2] - Yhat[, 2])
+    }
+    return(score)
+}
+
+conformalScoreClass <- function(Y, phat, type, wt){
+    ncl <- nlevels(Y)
+    if (type == "weighted"){
+        phat <- row_quo(phat, wt)
+    }
+    Yid <- as.numeric(Y)
+    score <- phat[cbind(1:length(Y), Yid)]
+    return(score)
+}
+
+
+## Truncate a sequence from both sides
+censoring <- function(x, high = 20, low = 0.05){
+    pmin(pmax(x, low), high)
+}
+
+
+predict.conformalSplit <- function(Yhat_test,Yscore, wt,wt_test,
+                                   alpha = 0.1,
+                                   wthigh = 20, wtlow = 0.05,type,side){
+    
+    avg_wt <- mean(c(wt, wt_test))
+    wt <- censoring(wt / avg_wt, wthigh, wtlow)
+    wt_test <- censoring(wt_test / avg_wt, wthigh, wtlow)
+   
+    totw <- sum(wt)
+    wt <- wt / totw
+    qt <- (1 + wt_test / totw) * (1 - alpha)
+    qt <- pmin(qt, 1)
+    Yslack <- weightedConformalCutoff(Yscore, wt, qt)
+    
+    if (type == "CQR" && side == "two"){
+        Ylo <- Yhat_test[, 1] - Yslack
+        Yup <- Yhat_test[, 2] + Yslack
+    } else if (type == "mean" && side == "two"){
+        Ylo <- Yhat_test - Yslack
+        Yup <- Yhat_test + Yslack
+    } else if (side == "above"){
+        Ylo <- -Inf
+        Yup <- Yhat_test + Yslack
+    } else if (side == "below"){
+        Ylo <- Yhat_test - Yslack
+        Yup <- Inf
+    }
+    
+    res <- data.frame(lower = Ylo, upper = Yup)
+    return(res)
+}
+
+
+```
+
+### conformal_learners.R
+```{r}
+## Guess the type of a variable
+guessClass <- function(x){
+    if (length(unique(x)) == 2 || is.logical(x) || (is.factor(x) && nlevels(x) == 2)){
+        dist <- "bernoulli"
+    } else if (is.factor(x) && nlevels(x) > 2){
+        dist <- "multinomial"
+    } else if (is.numeric(x)){
+        dist <- "gaussian"
+    }
+    return(dist)
+}
+
+## quantile random forest. grf package needed
+quantRF <- function(Y, X, Xtest, quantiles, ...){
+    fit <- grf::quantile_forest(X, Y, quantiles = quantiles, ...)
+    res <- predict(fit, Xtest, quantiles = quantiles)
+    res <- res[[1]]
+    if (length(quantiles) == 1){
+        res <- as.numeric(res)
+    } else {
+        res <- as.matrix(res)
+    }
+    return(res)
+}
+
+## random forest. randomForest package needed
+RF <- function(Y, X, Xtest, ...){
+    dist <- guessClass(Y)
+    if (dist == "gaussian"){
+        fit <- randomForest::randomForest(x = X, y = Y, ...)
+        res <- predict(fit, newdata = Xtest)
+        res <- as.numeric(res)
+    } else if (dist == "bernoulli"){
+        if (!is.factor(Y)){
+            Y <- as.factor(Y)
+        }
+        fit <- randomForest::randomForest(x = X, y = Y, ...)
+        res <- predict(fit, newdata = Xtest, type = "prob")
+        res <- as.numeric(res[, 2])
+    } else if (dist == "multinomial"){
+        if (!is.factor(Y)){
+            Y <- as.factor(Y)
+        }
+        fit <- randomForest::randomForest(x = X, y = Y, ...)
+        res <- predict(fit, newdata = Xtest, type = "prob")
+        res <- as.matrix(res)
+    }
+    return(res)
+}
+
+## quantile gradient boosting. gbm package needed
+quantBoosting <- function(Y, X, Xtest, quantiles, n.trees = 100, ...){
+    # if (class(X) != "data.frame"){
+    #     X <- as.data.frame(X)
+    #     Xtest <- as.data.frame(Xtest)
+    #     names(Xtest) <- names(X)
+    # }
+        X <- as.data.frame(X)
+        Xtest <- as.data.frame(Xtest)
+        names(Xtest) <- names(X)
+    data <- data.frame(Y = Y, X)
+    fit <- gbm::gbm(Y ~ ., distribution = list(name = "quantile", alpha = quantiles[1]), data = data, n.trees = n.trees, ...)
+    res <- predict(fit, Xtest, type = "response", n.trees = n.trees)
+    if (length(quantiles) == 2){
+        fit2 <- gbm::gbm(Y ~ ., distribution = list(name = "quantile", alpha = quantiles[2]), data = data, n.trees = n.trees, ...)
+        res2 <- predict(fit2, Xtest, type = "response", n.trees = n.trees)
+        res <- cbind(res, res2)
+    }
+    return(res)
+}
+
+## gradient boosting. gbm package needed
+Boosting <- function(Y, X, Xtest, n.trees = 100, ...){
+    # if (class(X) != "data.frame"){
+    #     X <- as.data.frame(X)
+    #     Xtest <- as.data.frame(Xtest)
+    #     names(Xtest) <- names(X)
+    # }
+    X <- as.data.frame(X)
+    Xtest <- as.data.frame(Xtest)
+    names(Xtest) <- names(X)
+    distribution <- guessClass(Y)
+    if (distribution == "bernoulli" && is.factor(Y)){
+        Y <- as.numeric(Y) - 1
+    }
+    data <- data.frame(Y = Y, X)
+    fit <- gbm::gbm(Y ~ ., distribution = distribution, data = data, n.trees = n.trees, ...)
+    res <- predict(fit, Xtest, type = "response", n.trees = n.trees)
+    if (distribution == "multinomial"){
+        res <- matrix(res, nrow = nrow(Xtest))
+    }
+    return(res)
+}
+
+## Logistic
+Logistic <- function(Y, X, Xtest, ...){
+    # if (class(X) != "data.frame"){
+    #     X <- as.data.frame(X)
+    #     Xtest <- as.data.frame(Xtest)
+    #     names(Xtest) <- names(X)
+    # }
+    X <- as.data.frame(X)
+    Xtest <- as.data.frame(Xtest)
+    names(Xtest) <- names(X)
+    distribution <- guessClass(Y)
+    if (distribution == "bernoulli" && is.factor(Y)){
+        Y <- as.numeric(Y) - 1
+    }
+    data <- data.frame(Y = Y, X)
+    fit <- stats::glm(Y ~ ., family=binomial(link='logit'),data=data)
+    res <- predict(fit, Xtest, type = "response")
+    if (distribution == "multinomial"){
+        res <- matrix(res, nrow = nrow(Xtest))
+    }
+    return(res)
+}
+
+
+## PenLogistic
+PenLogistic <- function(Y, X, Xtest, ...){
+    # if (class(X) != "data.frame"){
+    #     X <- as.data.frame(X)
+    #     Xtest <- as.data.frame(Xtest)
+    #     names(Xtest) <- names(X)
+    # }
+    X <- as.matrix(X)
+    Xtest <- as.matrix(Xtest)
+    names(Xtest) <- names(X)
+    distribution <- guessClass(Y)
+    if (distribution == "bernoulli" && is.factor(Y)){
+        Y <- as.numeric(Y) - 1
+    }
+    data <- data.frame(Y = Y, X)
+    fit <- glmnet::cv.glmnet(X, Y, family="binomial",alpha = 1)
+    res <- predict(fit, newx=Xtest, type = "response",s="lambda.min")
+    if (distribution == "multinomial"){
+        res <- matrix(res, nrow = nrow(Xtest))
+    }
+    return(res)
+}
+
+
+## posterior quantiles of BART. bartMachine package needed
+quantBART <- function(Y, X, Xtest, quantiles,
+                      ndpost = 100, ...){
+    # if (class(X) != "data.frame"){
+    #     X <- as.data.frame(X)
+    #     Xtest <- as.data.frame(Xtest)
+    #     names(Xtest) <- names(X)
+    # }
+    X <- as.data.frame(X)
+    Xtest <- as.data.frame(Xtest)
+    names(Xtest) <- names(X)
+    fit <- bartMachine::bartMachine(X, Y, verbose = FALSE)
+    if (length(quantiles) == 2){
+        if (sum(quantiles) != 1){
+            warning("Two quantiles should sum up to 1.")
+        }
+        ci_conf <- quantiles[2] - quantiles[1]
+        res <- bartMachine::calc_prediction_intervals(
+                                fit, new_data = Xtest,
+                                pi_conf = 0.95)$interval
+        res <- as.matrix(res)
+    } else if (length(quantiles) == 1){
+        if (quantiles[1] > 0.5){
+            ci_conf <- 2 * quantiles[1]
+            res <- bartMachine::calc_prediction_intervals(
+                                    fit, new_data = Xtest,
+                                    pi_conf = 0.95)$interval[, 2]
+            res <- as.numeric(res)
+        }  else{
+            ci_conf <- 2 * (1 - quantiles[1])
+            res <- bartMachine::calc_prediction_intervals(
+                                    fit, new_data = Xtest,
+                                    pi_conf = 0.95)$interval[, 1]
+            res <- as.numeric(res)
+        }
+    }
+    return(res)
+}
+
+## BART. bartMachine package needed
+BART <- function(Y, X, Xtest,
+                 ndpost = 100, ...){
+    # if (class(X) != "data.frame"){
+    #     X <- as.data.frame(X)
+    #     Xtest <- as.data.frame(Xtest)
+    #     names(Xtest) <- names(X)
+    # }
+    X <- as.data.frame(X)
+    Xtest <- as.data.frame(Xtest)
+    names(Xtest) <- names(X)
+    fit <- bartMachine::bartMachine(X, Y, verbose = FALSE)
+    res <- predict(fit, Xtest)
+    return(res)
+}
+
+```
+
+### propensityscore.R
+```{r}
+#################################################
+#first use all training data with T=1 and T=0
+#to training propensity score and predict propensity
+#score for testing data points
+
+
+## Convert a valid psfun string to the function
+str_psfun <- function(method){
+  if (method == "RF"){
+    if (!requireNamespace("randomForest")){
+      stop("randomForest package needs to be installed")
+    }
+    return(RF)
+  } else if (method == "Boosting"){
+    if (!requireNamespace("gbm")){
+      stop("gbm package needs to be installed")
+    }
+    return(Boosting)
+  } else {
+    stop(paste0(method, " is not supported. Please input a valid string or a function that meets the minimal requirements described in the man page"))
+  }
+}
+
+
+#psfun: only Boosting and RF are supported
+PropScore <- function(Ttrain,Xtrain,psfun, psparams){
+  
+  if (is.null(psfun)){
+    psfun <- Boosting
+  } else if (is.character(psfun)){
+    psfun <- str_psfun(psfun[1])
+  } 
+  
+  psparams0 <- psparams
+  psparams <- c(list(Y = Ttrain, X = Xtrain), psparams0)
+  PropScorefun <- function(X){
+    ps <- do.call(psfun, c(list(Xtest = X), psparams))
+    ps
+  }
+  PropScorefun
+}
+```
+
+### quantilereg.R
+```{r}
+#################################################
+#first use all training data with T=1 for 
+#quantile regression prediction
+
+
+## Convert a valid outfun string to the function
+#quantRF, quantBoosting, quantBART are supported
+str_outfun <- function(method){
+  if (method == "RF"){
+    if (!requireNamespace("randomForest")){
+      stop("randomForest package needs to be installed")
+    }
+    return(RF)
+  } else if (method == "quantRF"){
+    if (!requireNamespace("grf")){
+      stop("grf package needs to be installed")
+    }
+    return(quantRF)
+  } else if (method == "Boosting"){
+    if (!requireNamespace("gbm")){
+      stop("gbm package needs to be installed")
+    }
+    return(Boosting)
+  } else if (method == "quantBoosting"){
+    if (!requireNamespace("gbm")){
+      stop("gbm package needs to be installed")
+    }
+    return(quantBoosting)
+  } else if (method == "BART"){
+    if (!requireNamespace("bartMachine")){
+      stop("bartMachine package needs to be installed")
+    }
+    return(BART)
+  } else if (method == "quantBART"){
+    if (!requireNamespace("bartMachine")){
+      stop("bartMachine package needs to be installed")
+    }
+    return(quantBART)
+  } else {
+    stop(paste0(method, " is not supported. Please input a valid string or a function that meets the minimal requirements described in the man page"))
+  }
+}
+
+QuantileReg <- function(Ytrain,Xtrain,outfun,outparams=NULL,quantiles){
+  outparams <- c(outparams, list(quantiles = quantiles))
+  outparams <- c(list(Y = Ytrain, X = Xtrain), outparams)
+  
+  Ymodel <- function(X){
+    fit <- do.call(outfun, c(outparams, list(Xtest = X)))
+    fit
+  }
+  Ymodel
+}
+
+
+
+
+
+
+
+```
+
+### samplesplit.R
+```{r}
+############################################
+#split samples to training and validation
+#for both T=1 and T=0
+SampleSplit <- function(Y,trainprop){
+  T <- as.numeric(!is.na(Y))
+  inds1 <- which(T == 1)
+  inds0 <- which(T == 0)
+  n1 <- length(inds1)
+  n0 <- length(inds0)
+  trainid1 <- sample(n1, floor(n1 * trainprop))
+  trainid0 <- sample(n0, floor(n0 * trainprop))
+  trainid <- c(inds1[trainid1], inds0[trainid0])
+  return(list(trainid=trainid, trainid1=trainid1,trainid0=trainid0))
+}
+```
+
+### naive.R
+```{r}
+######################################
+###### 2022.4.13 zhang yingying ######
+
+#X,Y,T: X is a matrix, Y is a vector, T is a binary variable 0/1 (behavior policy)
+#Deta: is the parameter vector for target policy
+#Xtest: is the dataframe for test data
+
+#naive method: select D=T
+#trainprop: proportion of sample for training, including propensity score estimation and regression estimation
+#psfun: propensity score estimation method("Boosting", "RF", "Logistic", "PenLogistic")
+#psparams: parameters for psfun
+#outfun: regression estimation method("quantRF", "quantBoosting", "quantBART")
+#outparams: parameters for outfun
+#quantiles: 0.05,0.95 quantile levels for regression prediction for "CQR"
+#type: conformal quantile regression("CQR") and mean regression("mean")
+#side: "two", "above" and "below" confidence interval with quantile regression 
+#alpha: confidence level
+#wthigh/wtlow: upper and lower bounds for weights
+
+
+Naive <- function(X,Y,T,Deta,Xtest,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,alpha,wthigh,wtlow){
+  
+  n <- length(Y)
+  #split samples for training and calibration
+  YY <- Y
+  YY[!T] <- NA
+  T <- as.numeric(!is.na(YY))
+  res <- SampleSplit(YY,trainprop)
+  #res$trainid: index for all training
+  #res$trainid1: index for all training with T=1
+  #!!!need to select T=1 first and then select trainid1
+  #res$trainid0: index for all training with T=0
+  
+  #estimate the propensity score
+  Xtrain <- X[res$trainid, ,drop=FALSE]
+  Ttrain <- T[res$trainid]
+  PSFit_T <- PropScore(Ttrain,Xtrain,psfun, psparams)
+  
+  #estimate the propensity score for binary A
+  tp_T <- PSFit_T(X)
+  tp_D <- exp(cbind(1,X)%*%Deta)/(1+exp(cbind(1,X)%*%Deta))
+  ps_T_test <- PSFit_T(Xtest)
+  
+  #random sample from binary varibale(D)
+  D <- rbinom(n = n, size = 1, prob=tp_D)
+  O <- I(T==D)
+  Nts <- sum(O)
+  #quantile regression fitting after selecting A=T
+  X1 <- X[res$trainid, ,drop=FALSE]
+  Y1 <- Y[res$trainid]
+  #select O=1 from training data
+  ind <- which(O[res$trainid] == 1)
+  Xtrain <- X1[ind, ,drop=FALSE]
+  Ytrain <- Y1[ind]
+  OutputFit <- QuantileReg(Ytrain,Xtrain,outfun,outparams,quantiles)
+  Yhat_test <- OutputFit(Xtest)
+    
+  #data for validation
+  X0 <- X[-res$trainid, ,drop=FALSE]
+  Y0 <- Y[-res$trainid]
+  ind <- which(O[-res$trainid] == 1)
+  Xval <- X0[ind, ,drop=FALSE]
+  Yval <- Y0[ind]
+  ps_T_val <- PSFit_T(as.data.frame(Xval))
+  Yhat_val <- OutputFit(Xval)
+      
+  Yscore <- conformalScore(Yval, Yhat_val, type, side)
+  #construct the confidence interval by weighted CP
+  wt <- rep(1,length(ps_T_val))
+  wt_test <- rep(1,length(ps_T_test))
+  PredInt<- predict.conformalSplit(Yhat_test, Yscore,wt,wt_test,alpha,wthigh,wtlow,type,side)
+ 
+  lefts <- PredInt[,1]
+  rights <- PredInt[,2]
+  Lens <- rights-lefts
+  
+  return(list(lefts=lefts, rights=rights, Lens=Lens, Nts=Nts))
+}
+
+```
+
+### nrep
+```{r}
+d <- 4  # number of covariates (must be defined before alphas)
+n=2000
+nrep=10
+w.method=2
+#Ntl=15000
+Ntl=15000
+ntest <- 10000
+B_MS=5
+####alphas <- as.matrix(c(-4.25,0,0, 0,0), d+1, 1) 
+alphas <- as.matrix(c(1.35, -4,-4, 0,0), d+1, 1)
+####alphas <- as.matrix(c(-0.1, +0.5,-0.1, 0,0), d+1, 1) #7763
+####alphas <- as.matrix(c(-1.85, 0,0, 0,0), d+1, 1) 
+####alphas <- as.matrix(c(2, 0,0, -5,-5), d+1, 1)
+####alphas <- as.matrix(c(0.9, -2,0, -5,0), d+1, 1)#pass
+####alphas <- as.matrix(c(0, 0,0, 0,-5), d+1, 1)# pass
+alphas.true=alphas
+ex_site_num=4
+ex_site_size=500
+
+genY_singlestage_ex <- function(X,T,site_num){
+  n <- length(T)
+  Y <- 1+X[,1]-X[,2]+site_num*X[,3]^{3}+exp(X[,4])+T*(3-5*X[,1]+2*X[,2]-3*X[,3]+X[,4])+(1+T)*(1+X[,1]+X[,2]+X[,3]+X[,4])*rnorm(n)
+  return(Y)
+}
+```
+
+### Real Data Loading and Preprocessing
+
+#M source real data read part1
+```{r}
+
+dscc3 <- read.csv("process_4Lu_v2.csv")
+sitedict <- as.data.frame(read.csv("siteIDdict20251023.csv"))
+
+colnames(dscc3)[which(colnames(dscc3)=="cr")]="creat"
+colnames(dscc3)[which(colnames(dscc3)=="g")]="gluc"
+colnames(dscc3)[which(colnames(dscc3)=="lac")]="lactate"
+colnames(dscc3)[which(colnames(dscc3)=="sat")]="o2_sat"
+colnames(dscc3)[which(colnames(dscc3)=="mvent")]="mechvent"
+dscc=dscc3
+dscc=dscc[!is.na(dscc$y),]
+
+upmc <- read.csv("UPMCEHRraw.csv")
+upmc<-upmc[,-1]
+
+##### PATCH 1.1: derive 60-day mortality from death_days #####
+# Paper outcome is 60-day in-hospital mortality. Raw schema has death_days
+# and dead_90 but no dead_60. Patients with NA death_days are treated as
+# alive at day 60.
+upmc$dead_60 <- as.numeric(!is.na(upmc$death_days) & upmc$death_days <= 60)
+cat("dead_60 prevalence in UPMC:",
+    round(mean(upmc$dead_60), 3),
+    "(n =", sum(upmc$dead_60), "/", nrow(upmc), ")\n")
+##### END PATCH 1.1 #####
+
+#names(dscc3)
+#names(upmc)
+#dscc3[,c(32,33)]
+#levels(as.factor(dscc3[,c(33)]))#30
+#summary(as.factor(dscc3[,c(33)]))#31(46 patients) is UPMC
+
+#length(which(names(dscc)%in%names(upmc)))
+#which(names(dscc)%in%names(upmc))
+sharedCol=names(dscc)[which(names(dscc)%in%names(upmc))]
+upmcXidx=NULL
+for(i in 1:length(sharedCol)){
+  upmcXidxTemp=which(names(upmc)==sharedCol[i])
+  upmcXidx=c(upmcXidx,upmcXidxTemp)
+}
+Xtest=upmc[,upmcXidx]
+X=dscc[,c(which(names(dscc)%in%names(upmc)),33)]
+T=dscc$w
+T=as.numeric(as.character(as.factor(T)))
+Y=dscc$y
+X$sbp=as.numeric(X$sbp)
+#X$dbp=as.numeric(X$dbp)
+#cbind(names(X),names(Xtest))
+
+```
+
+#impute X
+```{r}
+library(mice)
+nrow(X)
+# Step 1: Perform multiple imputation
+X_imputed <- mice(X, method = "mean", seed = 123)  
+# 'pmm' (Predictive Mean Matching) is a common imputation method
+# 'm = 5' creates 5 imputed datasets
+
+# Step 2: Choose a co mplete dataset (or pool results later)
+X_complete <- complete(X_imputed)  # Choose the first completed dataset
+X=X_complete
+nrow(X)#895
+
+nrow(Xtest)
+X_imputed <- mice(Xtest, method = "mean", seed = 123)  
+# 'pmm' (Predictive Mean Matching) is a common imputation method
+# 'm = 5' creates 5 imputed datasets
+
+# Step 2: Choose a co mplete dataset (or pool results later)
+X_complete <- complete(X_imputed)  # Choose the first completed dataset
+Xtest=X_complete
+nrow(Xtest)#6546
+
+Xtest=as.matrix(Xtest)
+X=as.matrix(X)
+
+```
+
+```{r}
+Xo=X
+Yo=Y
+To=T
+X=Xo
+Y=Yo
+T=To
+```
+
+#M source real data read part2
+```{r}
+#X$dbp=as.numeric(X$dbp)
+#cbind(names(X),names(Xtest))
+#East=c(11,16,17,18,19,21,26,28,29,31,32,38,43,46,56,59,70,71,75,85,88,89)
+#West=c(10,20,22,23,34,36,37,42,90)
+sitedict <- as.data.frame(read.csv("siteIDdict20251023.csv"))
+East=NE=as.numeric(sitedict$SiteID[as.character(sitedict$zone4)=="NE"])
+SE=as.numeric(sitedict$SiteID[as.character(sitedict$zone4)=="SE"])
+W=as.numeric(sitedict$SiteID[as.character(sitedict$zone4)=="W"])
+MW=as.numeric(sitedict$SiteID[as.character(sitedict$zone4)=="MW"])
+#East=c(11,16,17,18,19,21,26,28,29,31,32)
+#West=c(10,20,22,23,34,36,37,42,90,38,43,46,56,59,70,71,75,85,88,89)
+#West1=c(10,20,22,23,34,36,37,42,90)
+#West2=c(38,43,46,56,59,70,71,75,85,88,89)
+#X_all_sitename=ifelse(X[,ncol(X)]%in%East,"E","W")
+#X_all_sitename=ifelse(X[,ncol(X)]%in%East,"E",ifelse(X[,ncol(X)]%in%West1,"W1","W2"))
+#X_all_sitename=ifelse(X[,ncol(X)]%in%NE,"NE",ifelse(X[,ncol(X)]%in%SE,"SE",ifelse(X[,ncol(X)]%in%MW,"MW","W")))
+X_all_sitename=ifelse(X[,ncol(X)]%in%NE,"NE",ifelse(X[,ncol(X)]%in%SE,"SE",ifelse(X[,ncol(X)]%in%MW,"NE","W")))
+sitenames=as.character(levels(as.factor(X_all_sitename)))
+#sitenames_ex=sitenames[sitenames!="E"]
+sitenames_ex=sitenames[sitenames!="NE"]
+
+#X_int=X[which(X[,ncol(X)]%in%c(East)),1:(ncol(X)-1)]#31
+#Y_int=Y[which(X[,ncol(X)]%in%c(East))]
+#T_int=T[which(X[,ncol(X)]%in%c(East))]
+X_int=X[which(X[,ncol(X)]%in%c(NE)),1:(ncol(X)-1)]#31
+Y_int=Y[which(X[,ncol(X)]%in%c(NE))]
+T_int=T[which(X[,ncol(X)]%in%c(NE))]
+X_all=X
+T_all=T
+Y_all=Y
+#X_int=X[which(X$siteid%in%c(31)),1:(ncol(X)-1)]#31
+#Y_int=Y[which(X$siteid%in%c(31))]
+#T_int=T[which(X$siteid%in%c(31))]
+nrow(X_int)#46upmc#412NE
+ncol(X)#20
+ncol(X_int)#19
+colnames(X)
+summary(as.factor(X_all_sitename))
+#ncol(upmc)
+#sum(!names(X_int)==names(X))
+#levels(as.factor(X$siteid))%in%c(East,West)
+```
+
+## Restrict to NE region as internal source (X = X_int, ~412 patients)
+## Used by both Block A (target-only) and Block B (multi-source) per design decision.
+## NB: paper Section 5.2 wording to be updated to match — say "Region 1 (NE) as internal"
+## rather than "all ProCESS as internal source".
+```{r}
+X=X_int
+T=T_int
+Y=Y_int
+#colnames(X)
+
+#sum(T_int!=T_2)#408
+#length(T_2)#892
+#length(T)#895
+```
+
+## PATCH 9 — Smooth severity-adaptive (SOFA-graded) evaluation policy
+
+The primary evaluation policy is now a SMOOTH, monotone function of SOFA
+severity rather than a hard `sofa_total >= 4` threshold. Treating SOFA as a
+ranked continuous severity index, the EGDT probability increases smoothly
+with severity:
+$$\pi_e(\text{EGDT}\mid X) = \mathrm{expit}\{\beta\,(\text{SOFA}-m)/s\},$$
+where $m,s$ are the SOFA mean and SD on the target (UPMC) population and
+$\beta>0$ controls steepness. This is a stochastic individualized treatment
+rule: sicker patients are assigned a higher EGDT probability, with no
+arbitrary cutpoint. The hard threshold is the limiting case $\beta\to\infty$.
+
+Implementation: unlike the hard policy (which spliced two constant-policy
+runs), a smooth policy is evaluated in a SINGLE run per block using the
+method's own subsampling + weighting machinery. Choosing a MODERATE $\beta$
+keeps $\pi_e$ away from 0/1, so the policy-shift subsampling retains enough
+calibration units and avoids the variance inflation seen with the earlier
+near-step 0.1/0.9 policy.
+
+```{r patch6-define-policy}
+##### PATCH 9: smooth severity-adaptive SOFA policy is now the primary.
+##### pi_e(EGDT | X) = expit( beta * (sofa_total - m) / s ),  beta > 0.
+#####
+##### Code convention (see ConformalCI): tp_D = expit(Deta'[1,X]) is the
+##### modeled probability of the CONTROL (UC) arm, so the EGDT evaluation
+##### policy is pi_e(EGDT|X) = 1 - tp_D = expit(-Deta'[1,X]). Hence to obtain
+##### pi_e(EGDT|X) = expit( beta*(sofa-m)/s ) we set
+#####     Deta[intercept]   =  beta * m / s
+#####     Deta[sofa column] = -beta / s
+##### with all other Deta entries = 0.
+
+sofa_col_idx <- which(colnames(Xtest) == "sofa_total")
+stopifnot(length(sofa_col_idx) == 1)   # SOFA must be present exactly once
+
+##### --- Tunable steepness of the severity-adaptive policy -------------------
+##### beta_sofa = change in EGDT log-odds per 1 SD of SOFA.
+#####   beta = 1.0 -> moderate grading (default): pi_e ~ 0.5 at mean SOFA,
+#####                 ~0.27/0.73 at +-1 SD, ~0.12/0.88 at +-2 SD.
+#####   larger beta  -> steeper, approaching the old hard >= 4 threshold.
+#####   smaller beta -> flatter, approaching the constant 0.5 policy.
+beta_sofa <- 1.0
+##### ---------------------------------------------------------------------------
+
+##### Standardization constants: SOFA mean / SD on the TARGET (UPMC) population
+##### where the policy is deployed. Held fixed so pi_e is a well-defined, known
+##### function of X applied consistently to source and target data.
+sofa_vec  <- as.numeric(Xtest[, "sofa_total"])
+sofa_mean <- mean(sofa_vec)
+sofa_sd   <- sd(sofa_vec)
+
+Deta_smooth <- rep(0, ncol(Xtest) + 1)
+Deta_smooth[1]                <-  beta_sofa * sofa_mean / sofa_sd   # intercept
+Deta_smooth[1 + sofa_col_idx] <- -beta_sofa / sofa_sd              # SOFA slope
+
+##### Constant all-EGDT policy retained for the constant-policy scenario / figure.
+Deta_egdt <- c(-6, rep(0, ncol(Xtest)))   # all EGDT (tp_D ~ 0, pi_e(EGDT) ~ 1)
+##### All-UC retained only for optional sensitivity (see the sensitivity stub).
+Deta_uc   <- c( 6, rep(0, ncol(Xtest)))   # all UC   (tp_D ~ 1, pi_e(EGDT) ~ 0)
+
+##### Per-patient EGDT policy value on the target population (diagnostics + the
+##### figure's severity-gradient stripe).
+pi_e_egdt_test <- as.numeric(1 / (1 + exp(cbind(1, as.matrix(Xtest)) %*% Deta_smooth)))
+##### (legacy) high-severity indicator; kept only as an optional visual marker,
+##### it no longer drives any splicing.
+sofa_high_idx  <- sofa_vec >= 4
+
+cat("\n=== PATCH 9 sanity check: smooth severity-adaptive EGDT policy ===\n")
+cat("beta_sofa =", beta_sofa, "| SOFA mean =", round(sofa_mean, 2),
+    "| SOFA sd =", round(sofa_sd, 2), "\n")
+cat("UPMC sofa_total summary:\n"); print(summary(sofa_vec))
+cat("Resulting pi_e(EGDT|X) summary:\n"); print(round(summary(pi_e_egdt_test), 3))
+cat("pi_e(EGDT|X) quantiles (5/25/50/75/95%):\n")
+print(round(quantile(pi_e_egdt_test, c(.05, .25, .5, .75, .95)), 3))
+cat("=== End sanity check ===\n\n")
+```
+
+
+## Block A: tCOPP-W (Region 1 (NE) internal, UPMC target, no external sources)
+```{r}
+#rm(list=ls())
+#source("genY.R")
+#source("samplesplit.R")
+#source("conformal_learners.R")
+#source("propensityscore.R")
+#source("quantilereg.R")
+#source("conformal_utils.R")
+#source("conformalCI.R")
+nrep=1
+# Generate data
+#d <- 4 #
+ntest=nrow(Xtest)
+d=ncol(X)
+trainprop <- 0.75
+#quantiles <- c(0.05,0.95)
+quantiles <- c(0.25,0.75)
+psfun <- Logistic
+psparams <- NULL
+#outfun <- quantRF
+outfun <- Logistic
+outparams <- NULL
+#type <- "CQR"
+type <- "mean"
+side <- "two"
+#alpha <- 0.1
+#alpha <- 0.5
+alpha <- 0.5
+wthigh <- 20
+wtlow <- 0.05
+method <- "Sweight"  ##### PATCH 6: B=1 single-split conformal (was BootSweight)
+B <- 1  ##### PATCH 6: B=1 single-split (was B_MS=20)
+conf.score="ASR"  ##### PATCH 1.4: V_AR per paper (was localASR)
+CovProb <- list()
+AveLeng <- list()
+ALOrac <- list()
+Nt <- list()
+####
+r0 <- list()
+
+####Teta <- c(-0.5,-0.5,-0.5,-0.5,-0.5)
+####Deta <- c(-0.5,1,1,-1,-1,rep(0,ncol(Xtest)-4))
+####Deta <- c(1,0.3,rep(0,ncol(Xtest)-1))
+Deta <- Deta_egdt  ##### Constant all-EGDT policy run (constant-policy scenario; saves *_0/_egdt)
+for (s_nrep in 1:nrep) {
+  
+  Xtest=as.matrix(Xtest)
+  ####generate all data with sample size Ntl
+  ####X_N <- matrix(runif(Ntl * d), nrow = Ntl, ncol = d)
+  ####tp_T_N <- exp(cbind(1,X_N)%*%Teta)/(1+exp(cbind(1,X_N)%*%Teta))
+  ####T_N <-rbinom(n = Ntl, size = 1, prob=tp_T_N)
+  ####Y_N <- genY_singlestage(X_N,T_N)
+  
+  #generate test data
+  ####ntest <- 10000
+  ####m=ntest
+  ####Xtest <- matrix(runif(ntest * d), nrow = ntest, ncol = d)
+  tp_D_test <- exp(cbind(1,as.matrix(Xtest))%*%Deta)/(1+exp(cbind(1,Xtest)%*%Deta))
+  Dtest <- rbinom(n = ntest, size = 1, prob=tp_D_test)
+  #Ytest <- genY_singlestage(Xtest,Dtest)[,2]####????
+  Ytest=NULL
+  #for (i in 1:ex_site_num){
+   # X_ex_site <- matrix(runif(ex_site_size * d), nrow = ex_site_size, ncol = d)
+    #X_ex_site_df = data.frame(X_ex_site)
+    #X_ex_site_df$Site=i+1
+    #tp_T_ex_site <- exp(cbind(1,X_ex_site)%*%Teta)/(1+exp(cbind(1,X_ex_site)%*%Teta))
+    #T_ex_site <-rbinom(n = ex_site_size, size = 1, prob=tp_T_ex_site)
+    #Y_ex_site <- genY_singlestage_ex(X_ex_site,T_ex_site,i+1)
+    #if(i>1){
+    #  X_ex=rbind(X_ex,X_ex_site_df)
+    #  T_ex=c(T_ex,T_ex_site)
+    #  Y_ex=c(Y_ex,Y_ex_site)
+    #}
+    #if(i==1){
+    #  X_ex=X_ex_site_df
+    #  T_ex=c(T_ex_site)
+    #  Y_ex=c(Y_ex_site)
+    #}
+  #}
+  
+  # Generate rwe 
+  #delta.is.one.ind <- sample(N, size=m)
+  #x.in.rwe <- x[delta.is.one.ind, ]
+  #####generate data
+  # Generate rct 
+  ####alphas <- as.matrix(c(1.35, -4,-4, 0,0), d+1, 1) 
+  ####alphas <- as.matrix(c(-1.86, 0,0, rep(0, d-2)), d+1, 1) 
+  #delta.tilde <- rbinom(Ntl, 1, delta.tilde.prob(cbind(1,X_N), alphas)) 
+  #n <- sum(delta.tilde)## sample size in rct n=2223
+  #print(n)
+  #delta.tilde.is.one.ind <- which(delta.tilde==1)
+  #X <- X_N[delta.tilde.is.one.ind, ]
+  #tp_T <- tp_T_N[delta.tilde.is.one.ind]
+  #T <- T_N[delta.tilde.is.one.ind]
+  #Y <- Y_N[delta.tilde.is.one.ind]
+  
+  wttl <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rct
+  wttl_test <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rwe
+  #w.method: 1 unweighted; 2 para1; 3 para2; 4 np
+  ####this is unweighted method
+  ####wttl <- wttl/sum(wttl)
+  ####????how to standardize wttl?
+
+  
+  Xtest <- as.data.frame(Xtest)
+  weighted <- TRUE
+  ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow)
+    ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  ####out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+####                  conf.score="ASR",
+  ####                conf.score,
+  ####                ps.Library="SL.glm",
+    ####              m.Library="SL.glm",
+      ####            p1=trainprop,#0.5
+        ####          seed=10012) 
+  ####out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+  ####                 conf.score,
+  ####                 ps.Library="SL.glm",
+   ####                m.Library="SL.glm",
+    ####               p1=trainprop,#0.5
+    ####               seed=10012) 
+  out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  if((B==1) & (method == "Sweight" | method == "Dweight")){
+    
+  #summary for single split
+  ind <- (Ytest<unlist(out$rights))&(Ytest>unlist(out$lefts))
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  #####  ##### PATCH 6 fix: dead code (rep(1,5) doesn't match real-data Xtest cols).
+  #  ALOrac[s_nrep] <- mean((1+Dtest)*(cbind(1,as.matrix(Xtest))%*%rep(1,5))*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }else if((B>1) & (method == "BootSweight" | method == "BootDweight")){
+    
+  #summary for multiple split
+  ind <- NULL
+  for(k in 1:ntest){
+    NInt <- length(out$lefts[k])
+    flag <- unlist(lapply(seq(1:NInt), function(x) return((out$lefts[[k]][x]<Ytest[k])&(Ytest[k]<out$rights[[k]][x]))))
+    ind[k] <- (sum(flag)>0)
+  }
+  sum(ind)/ntest
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  ####ALOrac[s_nrep] <- mean((1+Dtest)*(1+Xtest[,1]+Xtest[,2]+Xtest[,3]+Xtest[,4])*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }
+  
+  print(CovProb[s_nrep])
+  print(AveLeng[s_nrep])
+  print(s_nrep)
+  r0[s_nrep]=out$r0
+}
+
+#save.image("SS_low_BootSweight.Rdata")
+
+CP_low_EIF_MSource_localASR_BootSweight <- unlist(CovProb)
+AL_low_EIF_MSource_localASR_BootSweight <- unlist(AveLeng)
+r0_low_EIF_MSource_localASR_BootSweight<- unlist(r0)
+
+summary(out)
+out_lefts=NULL
+for(ii in 1:length(out$lefts)){
+  if(length(out$lefts[[ii]])<1){
+    out_lefts=c(out_lefts,NA)
+  }else{
+    #out_lefts=c(out_lefts,out$lefts[[ii]][1])
+    out_lefts=c(out_lefts,min(out$lefts[[ii]]))
+  }
+}
+out_rights=NULL
+for(ii in 1:length(out$rights)){
+  if(length(out$rights[[ii]])<1){
+    out_rights=c(out_rights,NA)
+  }else{
+    #out_rights=c(out_rights,out$rights[[ii]][1])
+    out_rights=c(out_rights,max(out$rights[[ii]][1]))
+  }
+}
+
+#out_lefts1=out_lefts
+#out_rights1=out_rights
+#out_lefts1=out_lefts
+#out_rights1=out_rights
+#upmcIntv=data.frame(out_lefts,out_rights,upmc$hosp_los,upmc$icu_los,upmc$icu_ever)
+#upmcIntv=data.frame(out_lefts0,out_rights0,out_lefts1,out_rights1,upmc$hosp_los,upmc$icu_los,upmc$icu_ever)
+#write.csv(upmcIntv,"upmcInterval2025032705alpha.csv")
+####write.csv(upmcIntv,"upmcInterval20250403.csv")
+#hist(upmc$icu_los)
+sum(out_lefts<=upmc$dead_60&out_rights>=upmc$dead_60,na.rm = TRUE)/nrow(upmc)#0.662 #0.91 #0.91 #0.57 #1
+
+
+out_lefts0=out_lefts
+out_rights0=out_rights
+##### PATCH 3: capture point estimate (Yhat_test/pred_y0) for arm 0
+mu_hat0 <- out$mu_hat
+##### END PATCH 3
+#out_lefts0=out_lefts
+#out_rights0=out_rights
+##### PATCH 4: SECOND HALF DISABLED — was the all-UC sensitivity run (Deta = c(6,...))
+##### kept visible inside if(FALSE) for reference; runnable copy lives in sensitivity chunk at end of file.
+##### PATCH 9: smooth severity-adaptive policy run (single pass; saves *_1/_smooth).
+Deta <- Deta_smooth  ##### PATCH 9: smooth severity-adaptive SOFA policy (single run)
+for (s_nrep in 1:nrep) {
+  
+  Xtest=as.matrix(Xtest)
+  ####generate all data with sample size Ntl
+  ####X_N <- matrix(runif(Ntl * d), nrow = Ntl, ncol = d)
+  ####tp_T_N <- exp(cbind(1,X_N)%*%Teta)/(1+exp(cbind(1,X_N)%*%Teta))
+  ####T_N <-rbinom(n = Ntl, size = 1, prob=tp_T_N)
+  ####Y_N <- genY_singlestage(X_N,T_N)
+  
+  #generate test data
+  ####ntest <- 10000
+  ####m=ntest
+  ####Xtest <- matrix(runif(ntest * d), nrow = ntest, ncol = d)
+  tp_D_test <- exp(cbind(1,as.matrix(Xtest))%*%Deta)/(1+exp(cbind(1,Xtest)%*%Deta))
+  Dtest <- rbinom(n = ntest, size = 1, prob=tp_D_test)
+  #Ytest <- genY_singlestage(Xtest,Dtest)[,2]####????
+  Ytest<-NULL
+  #for (i in 1:ex_site_num){
+   # X_ex_site <- matrix(runif(ex_site_size * d), nrow = ex_site_size, ncol = d)
+    #X_ex_site_df = data.frame(X_ex_site)
+    #X_ex_site_df$Site=i+1
+    #tp_T_ex_site <- exp(cbind(1,X_ex_site)%*%Teta)/(1+exp(cbind(1,X_ex_site)%*%Teta))
+    #T_ex_site <-rbinom(n = ex_site_size, size = 1, prob=tp_T_ex_site)
+    #Y_ex_site <- genY_singlestage_ex(X_ex_site,T_ex_site,i+1)
+    #if(i>1){
+    #  X_ex=rbind(X_ex,X_ex_site_df)
+    #  T_ex=c(T_ex,T_ex_site)
+    #  Y_ex=c(Y_ex,Y_ex_site)
+    #}
+    #if(i==1){
+    #  X_ex=X_ex_site_df
+    #  T_ex=c(T_ex_site)
+    #  Y_ex=c(Y_ex_site)
+    #}
+  #}
+  
+  # Generate rwe 
+  #delta.is.one.ind <- sample(N, size=m)
+  #x.in.rwe <- x[delta.is.one.ind, ]
+  #####generate data
+  # Generate rct 
+  ####alphas <- as.matrix(c(1.35, -4,-4, 0,0), d+1, 1) 
+  ####alphas <- as.matrix(c(-1.86, 0,0, rep(0, d-2)), d+1, 1) 
+  #delta.tilde <- rbinom(Ntl, 1, delta.tilde.prob(cbind(1,X_N), alphas)) 
+  #n <- sum(delta.tilde)## sample size in rct n=2223
+  #print(n)
+  #delta.tilde.is.one.ind <- which(delta.tilde==1)
+  #X <- X_N[delta.tilde.is.one.ind, ]
+  #tp_T <- tp_T_N[delta.tilde.is.one.ind]
+  #T <- T_N[delta.tilde.is.one.ind]
+  #Y <- Y_N[delta.tilde.is.one.ind]
+  
+  wttl <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rct
+  wttl_test <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rwe
+  #w.method: 1 unweighted; 2 para1; 3 para2; 4 np
+  ####this is unweighted method
+  ####wttl <- wttl/sum(wttl)
+  ####????how to standardize wttl?
+
+  
+  Xtest <- as.data.frame(Xtest)
+  weighted <- TRUE
+  ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow)
+    ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  ####out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+####                  conf.score="ASR",
+  ####                conf.score,
+  ####                ps.Library="SL.glm",
+    ####              m.Library="SL.glm",
+      ####            p1=trainprop,#0.5
+        ####          seed=10012) 
+  ####out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+  ####                 conf.score,
+  ####                 ps.Library="SL.glm",
+   ####                m.Library="SL.glm",
+    ####               p1=trainprop,#0.5
+    ####               seed=10012) 
+  out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  if((B==1) & (method == "Sweight" | method == "Dweight")){
+    
+  #summary for single split
+  ind <- (Ytest<unlist(out$rights))&(Ytest>unlist(out$lefts))
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  #####  ##### PATCH 6 fix: dead code (rep(1,5) doesn't match real-data Xtest cols).
+  #  ALOrac[s_nrep] <- mean((1+Dtest)*(cbind(1,as.matrix(Xtest))%*%rep(1,5))*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }else if((B>1) & (method == "BootSweight" | method == "BootDweight")){
+    
+  #summary for multiple split
+  ind <- NULL
+  for(k in 1:ntest){
+    NInt <- length(out$lefts[k])
+    flag <- unlist(lapply(seq(1:NInt), function(x) return((out$lefts[[k]][x]<Ytest[k])&(Ytest[k]<out$rights[[k]][x]))))
+    ind[k] <- (sum(flag)>0)
+  }
+  sum(ind)/ntest
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  ####ALOrac[s_nrep] <- mean((1+Dtest)*(1+Xtest[,1]+Xtest[,2]+Xtest[,3]+Xtest[,4])*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }
+  
+  print(CovProb[s_nrep])
+  print(AveLeng[s_nrep])
+  print(s_nrep)
+  r0[s_nrep]=out$r0
+}
+
+#save.image("SS_low_BootSweight.Rdata")
+
+CP_low_EIF_MSource_localASR_BootSweight <- unlist(CovProb)
+AL_low_EIF_MSource_localASR_BootSweight <- unlist(AveLeng)
+r0_low_EIF_MSource_localASR_BootSweight<- unlist(r0)
+
+summary(out)
+out_lefts=NULL
+for(ii in 1:length(out$lefts)){
+  if(length(out$lefts[[ii]])<1){
+    out_lefts=c(out_lefts,NA)
+  }else{
+    #out_lefts=c(out_lefts,out$lefts[[ii]][1])
+    out_lefts=c(out_lefts,min(out$lefts[[ii]][1]))
+  }
+}
+out_rights=NULL
+for(ii in 1:length(out$rights)){
+  if(length(out$rights[[ii]])<1){
+    out_rights=c(out_rights,NA)
+  }else{
+    #out_rights=c(out_rights,out$rights[[ii]][1])
+    out_rights=c(out_rights,max(out$rights[[ii]][1]))
+  }
+}
+
+#out_lefts1=out_lefts
+#out_rights1=out_rights
+#out_lefts1=out_lefts
+#out_rights1=out_rights
+#upmcIntv=data.frame(out_lefts,out_rights,upmc$hosp_los,upmc$icu_los,upmc$icu_ever)
+#upmcIntv=data.frame(out_lefts0,out_rights0,out_lefts1,out_rights1,upmc$hosp_los,upmc$icu_los,upmc$icu_ever)
+#write.csv(upmcIntv,"upmcInterval2025032705alpha.csv")
+####write.csv(upmcIntv,"upmcInterval20250403.csv")
+#hist(upmc$icu_los)
+sum(out_lefts<=upmc$dead_60&out_rights>=upmc$dead_60,na.rm = TRUE)/nrow(upmc)#0.662 #0.91 #0.91 #0.57 #1
+
+
+out_lefts1=out_lefts
+out_rights1=out_rights
+##### PATCH 3: capture point estimate (Yhat_test/pred_y0) for arm 1
+mu_hat1 <- out$mu_hat
+##### END PATCH 3
+#upmcIntv=data.frame(out_lefts,out_rights,upmc$hosp_los,upmc$icu_los,upmc$icu_ever)
+####upmcIntv=data.frame(out_lefts0,out_rights0,out_lefts1,out_rights1,upmc$hosp_los,upmc$icu_los,upmc$icu_ever)
+####write.csv(upmcIntv,"upmcInterval2025032705alpha.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_20250403.csv")
+#hist(upmc$icu_los)
+sum(out_lefts<=upmc$dead_60&out_rights>=upmc$dead_60,na.rm = TRUE)/nrow(upmc)#0.662 #0.91 #0.91 #0.57 #1
+#out_lefts0=out_lefts
+#out_rights0=out_rights
+#out_lefts1=out_lefts
+#out_rights1=out_rights
+##### PATCH 9: NO splicing. The _sofa columns ARE the smooth severity-adaptive
+##### policy intervals (the _1/_smooth run). The _egdt columns (the _0 run, the
+##### constant all-EGDT policy) are retained only for the constant-policy figure.
+upmcIntv = data.frame(
+  out_lefts_egdt  = out_lefts0,    out_rights_egdt = out_rights0,    mu_hat_egdt = mu_hat0,
+  out_lefts_smooth = out_lefts1,   out_rights_smooth = out_rights1,  mu_hat_smooth = mu_hat1,
+  ##### PATCH 9: _sofa now aliases the smooth-policy run (_1); no splicing.
+  out_lefts_sofa  = out_lefts1,
+  out_rights_sofa = out_rights1,
+  mu_hat_sofa     = mu_hat1,
+  upmc.dead_60    = upmc$dead_60,
+  upmc.death_days = upmc$death_days,
+  upmc.dead_90    = upmc$dead_90
+)
+upmcIntv_surv_copptl=upmcIntv
+####write.csv(upmcIntv,"upmcInterval2025032705alpha.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_20250403.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_survival_alpha0.9_20250424.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_survival_alpha0.5_20250424.csv")
+#write.csv(upmcIntv,"upmcInterval_EIF_survival_alpha0.5_20250919.csv")
+#write.csv(upmcIntv,"upmcInterval_COPPTL_ASRlogistic_survival_alpha0.5_20250919.csv")
+#write.csv(upmcIntv,"upmcInterval_COPPTL_ASRlogistic_survival_alpha0.5_int_20251023.csv")
+write.csv(upmcIntv,"upmcInterval_COPPTL_ASRlogistic_survival_alpha0.5_intNE_20251023.csv")
+```
+
+```{r block-a-tcoppw-snapshot}
+##### Snapshot Block A tCOPP-W intervals for the plotting block
+upmcIntv_blockA_W <- upmcIntv
+```
+
+
+## Block A: tCOPP-EIF(I) (Region 1 (NE) internal, UPMC target, no external sources)
+```{r}
+B_MS=20
+#rm(list=ls())
+#source("genY.R")
+#source("samplesplit.R")
+#source("conformal_learners.R")
+#source("propensityscore.R")
+#source("quantilereg.R")
+#source("conformal_utils.R")
+#source("conformalCI.R")
+nrep=1
+ps.Library="SL.glm"
+m.Library="SL.glm"
+# Generate data
+#d <- 4 #
+ntest=nrow(Xtest)
+d=ncol(X)
+trainprop <- 0.75
+quantiles <- c(0.05,0.95)
+psfun <- Logistic
+psparams <- NULL
+outfun <- quantRF
+outparams <- NULL
+type <- "CQR"
+side <- "two"
+#alpha <- 0.1
+alpha <- 0.5
+wthigh <- 20
+wtlow <- 0.05
+method <- "BootSweight"  ##### PATCH 10: multi-split majority vote (stochastic policy needs aggregation)
+B <- B_MS  ##### PATCH 10: B = B_MS multi-split; single split was degenerate (intervals -> [0,1]) under the smooth policy
+#conf.score="localASR"
+conf.score="ASR"
+CovProb <- list()
+AveLeng <- list()
+ALOrac <- list()
+Nt <- list()
+####
+r0 <- list()
+
+####Teta <- c(-0.5,-0.5,-0.5,-0.5,-0.5)
+####Deta <- c(-0.5,1,1,-1,-1,rep(0,ncol(Xtest)-4))
+####Deta <- c(1,0.3,rep(0,ncol(Xtest)-1))
+Deta <- Deta_egdt  ##### Constant all-EGDT policy run (constant-policy scenario; saves *_0/_egdt)
+for (s_nrep in 1:nrep) {
+  
+  Xtest=as.matrix(Xtest)
+  ####generate all data with sample size Ntl
+  ####X_N <- matrix(runif(Ntl * d), nrow = Ntl, ncol = d)
+  ####tp_T_N <- exp(cbind(1,X_N)%*%Teta)/(1+exp(cbind(1,X_N)%*%Teta))
+  ####T_N <-rbinom(n = Ntl, size = 1, prob=tp_T_N)
+  ####Y_N <- genY_singlestage(X_N,T_N)
+  
+  #generate test data
+  ####ntest <- 10000
+  ####m=ntest
+  ####Xtest <- matrix(runif(ntest * d), nrow = ntest, ncol = d)
+  tp_D_test <- exp(cbind(1,as.matrix(Xtest))%*%Deta)/(1+exp(cbind(1,Xtest)%*%Deta))
+  Dtest <- rbinom(n = ntest, size = 1, prob=tp_D_test)
+  ##### PATCH 1.3: real Y not available at test time. Coverage computed later vs upmc$dead_60.
+  Ytest <- NULL
+  
+  #for (i in 1:ex_site_num){
+   # X_ex_site <- matrix(runif(ex_site_size * d), nrow = ex_site_size, ncol = d)
+    #X_ex_site_df = data.frame(X_ex_site)
+    #X_ex_site_df$Site=i+1
+    #tp_T_ex_site <- exp(cbind(1,X_ex_site)%*%Teta)/(1+exp(cbind(1,X_ex_site)%*%Teta))
+    #T_ex_site <-rbinom(n = ex_site_size, size = 1, prob=tp_T_ex_site)
+    #Y_ex_site <- genY_singlestage_ex(X_ex_site,T_ex_site,i+1)
+    #if(i>1){
+    #  X_ex=rbind(X_ex,X_ex_site_df)
+    #  T_ex=c(T_ex,T_ex_site)
+    #  Y_ex=c(Y_ex,Y_ex_site)
+    #}
+    #if(i==1){
+    #  X_ex=X_ex_site_df
+    #  T_ex=c(T_ex_site)
+    #  Y_ex=c(Y_ex_site)
+    #}
+  #}
+  
+  # Generate rwe 
+  #delta.is.one.ind <- sample(N, size=m)
+  #x.in.rwe <- x[delta.is.one.ind, ]
+  #####generate data
+  # Generate rct 
+  ####alphas <- as.matrix(c(1.35, -4,-4, 0,0), d+1, 1) 
+  ####alphas <- as.matrix(c(-1.86, 0,0, rep(0, d-2)), d+1, 1) 
+  #delta.tilde <- rbinom(Ntl, 1, delta.tilde.prob(cbind(1,X_N), alphas)) 
+  #n <- sum(delta.tilde)## sample size in rct n=2223
+  #print(n)
+  #delta.tilde.is.one.ind <- which(delta.tilde==1)
+  #X <- X_N[delta.tilde.is.one.ind, ]
+  #tp_T <- tp_T_N[delta.tilde.is.one.ind]
+  #T <- T_N[delta.tilde.is.one.ind]
+  #Y <- Y_N[delta.tilde.is.one.ind]
+  
+  wttl <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rct
+  wttl_test <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rwe
+  #w.method: 1 unweighted; 2 para1; 3 para2; 4 np
+  ####this is unweighted method
+  ####wttl <- wttl/sum(wttl)
+  ####????how to standardize wttl?
+
+  
+  Xtest <- as.data.frame(Xtest)
+  weighted <- TRUE
+  ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow)
+    ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  ####out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+####                  conf.score="ASR",
+  ####                conf.score,
+  ####                ps.Library="SL.glm",
+    ####              m.Library="SL.glm",
+      ####            p1=trainprop,#0.5
+        ####          seed=10012) 
+  out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+                 conf.score,
+                  ps.Library="SL.glm",
+                  m.Library="SL.glm",
+                  p1=trainprop,#0.5
+                   seed=10012) 
+  ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  if((B==1) & (method == "Sweight" | method == "Dweight")){
+    
+  #summary for single split
+  ind <- (Ytest<unlist(out$rights))&(Ytest>unlist(out$lefts))
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  #####  ##### PATCH 6 fix: dead code (rep(1,5) doesn't match real-data Xtest cols).
+  #  ALOrac[s_nrep] <- mean((1+Dtest)*(cbind(1,as.matrix(Xtest))%*%rep(1,5))*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }else if((B>1) & (method == "BootSweight" | method == "BootDweight")){
+    
+  #summary for multiple split
+  ind <- NULL
+  for(k in 1:ntest){
+    NInt <- length(out$lefts[k])
+    flag <- unlist(lapply(seq(1:NInt), function(x) return((out$lefts[[k]][x]<Ytest[k])&(Ytest[k]<out$rights[[k]][x]))))
+    ind[k] <- (sum(flag)>0)
+  }
+  sum(ind)/ntest
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  ####ALOrac[s_nrep] <- mean((1+Dtest)*(1+Xtest[,1]+Xtest[,2]+Xtest[,3]+Xtest[,4])*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }
+  
+  print(CovProb[s_nrep])
+  print(AveLeng[s_nrep])
+  print(s_nrep)
+  r0[s_nrep]=out$r0
+}
+
+#save.image("SS_low_BootSweight.Rdata")
+
+CP_low_EIF_MSource_localASR_BootSweight <- unlist(CovProb)
+AL_low_EIF_MSource_localASR_BootSweight <- unlist(AveLeng)
+r0_low_EIF_MSource_localASR_BootSweight<- unlist(r0)
+
+summary(out)
+out_lefts=NULL
+for(ii in 1:length(out$lefts)){
+  if(length(out$lefts[[ii]])<1){
+    out_lefts=c(out_lefts,NA)
+  }else{
+    #out_lefts=c(out_lefts,out$lefts[[ii]][1])
+    out_lefts=c(out_lefts,min(out$lefts[[ii]]))
+  }
+}
+out_rights=NULL
+for(ii in 1:length(out$rights)){
+  if(length(out$rights[[ii]])<1){
+    out_rights=c(out_rights,NA)
+  }else{
+    #out_rights=c(out_rights,out$rights[[ii]][1])
+    out_rights=c(out_rights,max(out$rights[[ii]][1]))
+  }
+}
+
+out_lefts0=out_lefts
+out_rights0=out_rights
+##### PATCH 3: capture point estimate (Yhat_test/pred_y0) for arm 0
+mu_hat0 <- out$mu_hat
+##### END PATCH 3
+#out_lefts0=out_lefts
+#out_rights0=out_rights
+
+##### PATCH 4: SECOND HALF DISABLED — was the all-UC sensitivity run (Deta = c(6,...))
+##### kept visible inside if(FALSE) for reference; runnable copy lives in sensitivity chunk at end of file.
+##### PATCH 9: smooth severity-adaptive policy run (single pass; saves *_1/_smooth).
+Deta <- Deta_smooth  ##### PATCH 9: smooth severity-adaptive SOFA policy (single run)
+for (s_nrep in 1:nrep) {
+  
+  Xtest=as.matrix(Xtest)
+  ####generate all data with sample size Ntl
+  ####X_N <- matrix(runif(Ntl * d), nrow = Ntl, ncol = d)
+  ####tp_T_N <- exp(cbind(1,X_N)%*%Teta)/(1+exp(cbind(1,X_N)%*%Teta))
+  ####T_N <-rbinom(n = Ntl, size = 1, prob=tp_T_N)
+  ####Y_N <- genY_singlestage(X_N,T_N)
+  
+  #generate test data
+  ####ntest <- 10000
+  ####m=ntest
+  ####Xtest <- matrix(runif(ntest * d), nrow = ntest, ncol = d)
+  tp_D_test <- exp(cbind(1,as.matrix(Xtest))%*%Deta)/(1+exp(cbind(1,Xtest)%*%Deta))
+  Dtest <- rbinom(n = ntest, size = 1, prob=tp_D_test)
+  ##### PATCH 1.3: real Y not available at test time. Coverage computed later vs upmc$dead_60.
+  Ytest <- NULL
+  
+  #for (i in 1:ex_site_num){
+   # X_ex_site <- matrix(runif(ex_site_size * d), nrow = ex_site_size, ncol = d)
+    #X_ex_site_df = data.frame(X_ex_site)
+    #X_ex_site_df$Site=i+1
+    #tp_T_ex_site <- exp(cbind(1,X_ex_site)%*%Teta)/(1+exp(cbind(1,X_ex_site)%*%Teta))
+    #T_ex_site <-rbinom(n = ex_site_size, size = 1, prob=tp_T_ex_site)
+    #Y_ex_site <- genY_singlestage_ex(X_ex_site,T_ex_site,i+1)
+    #if(i>1){
+    #  X_ex=rbind(X_ex,X_ex_site_df)
+    #  T_ex=c(T_ex,T_ex_site)
+    #  Y_ex=c(Y_ex,Y_ex_site)
+    #}
+    #if(i==1){
+    #  X_ex=X_ex_site_df
+    #  T_ex=c(T_ex_site)
+    #  Y_ex=c(Y_ex_site)
+    #}
+  #}
+  
+  # Generate rwe 
+  #delta.is.one.ind <- sample(N, size=m)
+  #x.in.rwe <- x[delta.is.one.ind, ]
+  #####generate data
+  # Generate rct 
+  ####alphas <- as.matrix(c(1.35, -4,-4, 0,0), d+1, 1) 
+  ####alphas <- as.matrix(c(-1.86, 0,0, rep(0, d-2)), d+1, 1) 
+  #delta.tilde <- rbinom(Ntl, 1, delta.tilde.prob(cbind(1,X_N), alphas)) 
+  #n <- sum(delta.tilde)## sample size in rct n=2223
+  #print(n)
+  #delta.tilde.is.one.ind <- which(delta.tilde==1)
+  #X <- X_N[delta.tilde.is.one.ind, ]
+  #tp_T <- tp_T_N[delta.tilde.is.one.ind]
+  #T <- T_N[delta.tilde.is.one.ind]
+  #Y <- Y_N[delta.tilde.is.one.ind]
+  
+  wttl <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rct
+  wttl_test <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rwe
+  #w.method: 1 unweighted; 2 para1; 3 para2; 4 np
+  ####this is unweighted method
+  ####wttl <- wttl/sum(wttl)
+  ####????how to standardize wttl?
+
+  
+  Xtest <- as.data.frame(Xtest)
+  weighted <- TRUE
+  ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow)
+    ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  ####out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+####                  conf.score="ASR",
+  ####                conf.score,
+  ####                ps.Library="SL.glm",
+    ####              m.Library="SL.glm",
+      ####            p1=trainprop,#0.5
+        ####          seed=10012) 
+  out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+                 conf.score,
+                  ps.Library="SL.glm",
+                  m.Library="SL.glm",
+                  p1=trainprop,#0.5
+                   seed=10012) 
+  ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  if((B==1) & (method == "Sweight" | method == "Dweight")){
+    
+  #summary for single split
+  ind <- (Ytest<unlist(out$rights))&(Ytest>unlist(out$lefts))
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  #####  ##### PATCH 6 fix: dead code (rep(1,5) doesn't match real-data Xtest cols).
+  #  ALOrac[s_nrep] <- mean((1+Dtest)*(cbind(1,as.matrix(Xtest))%*%rep(1,5))*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }else if((B>1) & (method == "BootSweight" | method == "BootDweight")){
+    
+  #summary for multiple split
+  ind <- NULL
+  for(k in 1:ntest){
+    NInt <- length(out$lefts[k])
+    flag <- unlist(lapply(seq(1:NInt), function(x) return((out$lefts[[k]][x]<Ytest[k])&(Ytest[k]<out$rights[[k]][x]))))
+    ind[k] <- (sum(flag)>0)
+  }
+  sum(ind)/ntest
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  ####ALOrac[s_nrep] <- mean((1+Dtest)*(1+Xtest[,1]+Xtest[,2]+Xtest[,3]+Xtest[,4])*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }
+  
+  print(CovProb[s_nrep])
+  print(AveLeng[s_nrep])
+  print(s_nrep)
+  r0[s_nrep]=out$r0
+}
+
+#save.image("SS_low_BootSweight.Rdata")
+
+CP_low_EIF_MSource_localASR_BootSweight <- unlist(CovProb)
+AL_low_EIF_MSource_localASR_BootSweight <- unlist(AveLeng)
+r0_low_EIF_MSource_localASR_BootSweight<- unlist(r0)
+
+summary(out)
+out_lefts=NULL
+for(ii in 1:length(out$lefts)){
+  if(length(out$lefts[[ii]])<1){
+    out_lefts=c(out_lefts,NA)
+  }else{
+    #out_lefts=c(out_lefts,out$lefts[[ii]][1])
+    out_lefts=c(out_lefts,min(out$lefts[[ii]]))
+  }
+}
+out_rights=NULL
+for(ii in 1:length(out$rights)){
+  if(length(out$rights[[ii]])<1){
+    out_rights=c(out_rights,NA)
+  }else{
+    #out_rights=c(out_rights,out$rights[[ii]][1])
+    out_rights=c(out_rights,max(out$rights[[ii]][1]))
+  }
+}
+
+out_lefts1=out_lefts
+out_rights1=out_rights
+##### PATCH 3: capture point estimate (Yhat_test/pred_y0) for arm 1
+mu_hat1 <- out$mu_hat
+##### END PATCH 3
+#upmcIntv=data.frame(out_lefts,out_rights,upmc$hosp_los,upmc$icu_los,upmc$icu_ever)
+####upmcIntv=data.frame(out_lefts0,out_rights0,out_lefts1,out_rights1,upmc$hosp_los,upmc$icu_los,upmc$icu_ever)
+####write.csv(upmcIntv,"upmcInterval2025032705alpha.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_20250403.csv")
+#hist(upmc$icu_los)
+sum(out_lefts<=upmc$dead_60&out_rights>=upmc$dead_60,na.rm = TRUE)/nrow(upmc)#0.662 #0.91 #0.91 #0.57 #1
+#out_lefts0=out_lefts
+#out_rights0=out_rights
+#out_lefts1=out_lefts
+#out_rights1=out_rights
+##### PATCH 9: NO splicing. The _sofa columns ARE the smooth severity-adaptive
+##### policy intervals (the _1/_smooth run). The _egdt columns (the _0 run, the
+##### constant all-EGDT policy) are retained only for the constant-policy figure.
+upmcIntv = data.frame(
+  out_lefts_egdt  = out_lefts0,    out_rights_egdt = out_rights0,    mu_hat_egdt = mu_hat0,
+  out_lefts_smooth = out_lefts1,   out_rights_smooth = out_rights1,  mu_hat_smooth = mu_hat1,
+  ##### PATCH 9: _sofa now aliases the smooth-policy run (_1); no splicing.
+  out_lefts_sofa  = out_lefts1,
+  out_rights_sofa = out_rights1,
+  mu_hat_sofa     = mu_hat1,
+  upmc.dead_60    = upmc$dead_60,
+  upmc.death_days = upmc$death_days,
+  upmc.dead_90    = upmc$dead_90
+)
+#upmcIntv_eif_surv=upmcIntv
+####write.csv(upmcIntv,"upmcInterval2025032705alpha.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_20250403.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_survival_alpha0.9_20250424.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_survival_alpha0.5_20250424.csv")
+#write.csv(upmcIntv,"upmcInterval_EIF_ASR_BMS20_survival_alpha0.5_20250919.csv")
+#write.csv(upmcIntv,"upmcInterval_EIF_ASR_BMS20_survival_alpha0.5_int_20251023.csv")
+write.csv(upmcIntv,"upmcInterval_EIF_ASR_BMS20_survival_alpha0.5_intNE_20251023.csv")
+```
+
+```{r block-a-eifi-snapshot}
+##### Snapshot Block A tCOPP-EIF(I) intervals for the plotting block
+upmcIntv_blockA_EIFI <- upmcIntv
+```
+
+
+```{r}
+ for (i in 1:length(sitenames_ex)){
+    #X_ex_site <- matrix(runif(ex_site_size * d), nrow = ex_site_size, ncol = d)
+    X_ex_site <- X_all[X_all_sitename==sitenames_ex[i],1:(ncol(X_all)-1)]
+    X_ex_site_df = data.frame(X_ex_site)
+    X_ex_site_df$Site=i+1
+    #tp_T_ex_site <- exp(cbind(1,X_ex_site)%*%Teta)/(1+exp(cbind(1,X_ex_site)%*%Teta))
+    #T_ex_site <-rbinom(n = ex_site_size, size = 1, prob=tp_T_ex_site)
+    T_ex_site <-T_all[X_all_sitename==sitenames_ex[i]]
+    Y_ex_site <-Y_all[X_all_sitename==sitenames_ex[i]]
+    #Y_ex_site <- genY_singlestage_ex(X_ex_site,T_ex_site,i+1)[,1]
+    if(i>1){
+      X_ex=rbind(X_ex,X_ex_site_df)
+      T_ex=c(T_ex,T_ex_site)
+      Y_ex=c(Y_ex,Y_ex_site)
+    }
+    if(i==1){
+      X_ex=X_ex_site_df
+      T_ex=c(T_ex_site)
+      Y_ex=c(Y_ex_site)
+    }
+  }
+```
+
+## Block B: tCOPP-EIF(I) and tCOPP-EIF(M) (Region 1 internal; Regions 2 & 3 external)
+```{r}
+B_MS=20
+#rm(list=ls())
+#source("genY.R")
+#source("samplesplit.R")
+#source("conformal_learners.R")
+#source("propensityscore.R")
+#source("quantilereg.R")
+#source("conformal_utils.R")
+#source("conformalCI.R")
+nrep=1
+ps.Library="SL.glm"
+m.Library="SL.glm"
+# Generate data
+#d <- 4 #
+ntest=nrow(Xtest)
+d=ncol(X)
+trainprop <- 0.75
+quantiles <- c(0.05,0.95)
+psfun <- Logistic
+psparams <- NULL
+outfun <- quantRF
+#outfun <- Logistic
+outparams <- NULL
+type <- "CQR"
+#type <- "mean"
+side <- "two"
+#alpha <- 0.1
+alpha <- 0.5
+wthigh <- 20
+wtlow <- 0.05
+method <- "BootSweight"  ##### PATCH 10: multi-split majority vote (stochastic policy needs aggregation)
+B <- B_MS  ##### PATCH 10: B = B_MS multi-split; single split was degenerate (intervals -> [0,1]) under the smooth policy
+#B <- B_MS #B=1 for Sweight or Dweight, B>1 for BootSweight or BootDweightvv xc  c
+#conf.score="localASR"
+conf.score="ASR"
+CovProb <- list()
+AveLeng <- list()
+ALOrac <- list()
+Nt <- list()
+####
+r0 <- list()
+
+####Teta <- c(-0.5,-0.5,-0.5,-0.5,-0.5)
+####Deta <- c(-0.5,1,1,-1,-1,rep(0,ncol(Xtest)-4))
+####Deta <- c(1,0.3,rep(0,ncol(Xtest)-1))
+Deta <- Deta_egdt  ##### Constant all-EGDT policy run (constant-policy scenario; saves *_0/_egdt)
+for (s_nrep in 1:nrep) {
+  colnames(Xtest)=colnames(X)=colnames(X_all)=NULL
+  Xtest=as.matrix(Xtest)
+  ####generate all data with sample size Ntl
+  ####X_N <- matrix(runif(Ntl * d), nrow = Ntl, ncol = d)
+  ####tp_T_N <- exp(cbind(1,X_N)%*%Teta)/(1+exp(cbind(1,X_N)%*%Teta))
+  ####T_N <-rbinom(n = Ntl, size = 1, prob=tp_T_N)
+  ####Y_N <- genY_singlestage(X_N,T_N)
+  
+  #generate test data
+  ####ntest <- 10000
+  ####m=ntest
+  ####Xtest <- matrix(runif(ntest * d), nrow = ntest, ncol = d)
+  tp_D_test <- exp(cbind(1,as.matrix(Xtest))%*%Deta)/(1+exp(cbind(1,Xtest)%*%Deta))
+  Dtest <- rbinom(n = ntest, size = 1, prob=tp_D_test)
+  ##### PATCH 1.3: real Y not available at test time. Coverage computed later vs upmc$dead_60.
+  Ytest <- NULL
+  #Ytest <- NULL
+  
+  #for (i in 1:ex_site_num){
+   # X_ex_site <- matrix(runif(ex_site_size * d), nrow = ex_site_size, ncol = d)
+    #X_ex_site_df = data.frame(X_ex_site)
+    #X_ex_site_df$Site=i+1
+    #tp_T_ex_site <- exp(cbind(1,X_ex_site)%*%Teta)/(1+exp(cbind(1,X_ex_site)%*%Teta))
+    #T_ex_site <-rbinom(n = ex_site_size, size = 1, prob=tp_T_ex_site)
+    #Y_ex_site <- genY_singlestage_ex(X_ex_site,T_ex_site,i+1)
+    #if(i>1){
+    #  X_ex=rbind(X_ex,X_ex_site_df)
+    #  T_ex=c(T_ex,T_ex_site)
+    #  Y_ex=c(Y_ex,Y_ex_site)
+    #}
+    #if(i==1){
+    #  X_ex=X_ex_site_df
+    #  T_ex=c(T_ex_site)
+    #  Y_ex=c(Y_ex_site)
+    #}
+  #}
+  
+  #for (i in 1:ex_site_num){
+  for (i in 1:length(sitenames_ex)){
+    #X_ex_site <- matrix(runif(ex_site_size * d), nrow = ex_site_size, ncol = d)
+    X_ex_site <- X_all[X_all_sitename==sitenames_ex[i],1:(ncol(X_all)-1)]
+    X_ex_site_df = data.frame(X_ex_site)
+    X_ex_site_df$Site=i+1
+    #tp_T_ex_site <- exp(cbind(1,X_ex_site)%*%Teta)/(1+exp(cbind(1,X_ex_site)%*%Teta))
+    #T_ex_site <-rbinom(n = ex_site_size, size = 1, prob=tp_T_ex_site)
+    T_ex_site <-T_all[X_all_sitename==sitenames_ex[i]]
+    Y_ex_site <-Y_all[X_all_sitename==sitenames_ex[i]]
+    #Y_ex_site <- genY_singlestage_ex(X_ex_site,T_ex_site,i+1)[,1]
+    if(i>1){
+      X_ex=rbind(X_ex,X_ex_site_df)
+      T_ex=c(T_ex,T_ex_site)
+      Y_ex=c(Y_ex,Y_ex_site)
+    }
+    if(i==1){
+      X_ex=X_ex_site_df
+      T_ex=c(T_ex_site)
+      Y_ex=c(Y_ex_site)
+    }
+  }
+  
+  
+  # Generate rwe 
+  #delta.is.one.ind <- sample(N, size=m)
+  #x.in.rwe <- x[delta.is.one.ind, ]
+  #####generate data
+  # Generate rct 
+  ####alphas <- as.matrix(c(1.35, -4,-4, 0,0), d+1, 1) 
+  ####alphas <- as.matrix(c(-1.86, 0,0, rep(0, d-2)), d+1, 1) 
+  #delta.tilde <- rbinom(Ntl, 1, delta.tilde.prob(cbind(1,X_N), alphas)) 
+  #n <- sum(delta.tilde)## sample size in rct n=2223
+  #print(n)
+  #delta.tilde.is.one.ind <- which(delta.tilde==1)
+  #X <- X_N[delta.tilde.is.one.ind, ]
+  #tp_T <- tp_T_N[delta.tilde.is.one.ind]
+  #T <- T_N[delta.tilde.is.one.ind]
+  #Y <- Y_N[delta.tilde.is.one.ind]
+  
+  wttl <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rct
+  wttl_test <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rwe
+  #w.method: 1 unweighted; 2 para1; 3 para2; 4 np
+  ####this is unweighted method
+  ####wttl <- wttl/sum(wttl)
+  ####????how to standardize wttl?
+
+  
+  Xtest <- as.data.frame(Xtest)
+  weighted <- TRUE
+  ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow)
+    ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  ####out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+####                  conf.score="ASR",
+  ####                conf.score,
+  ####                ps.Library="SL.glm",
+    ####              m.Library="SL.glm",
+      ####            p1=trainprop,#0.5
+        ####          seed=10012) 
+  #out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+   #              conf.score,
+  #                ps.Library="SL.glm",
+  #                m.Library="SL.glm",
+  #                p1=trainprop,#0.5
+  #                 seed=10012) 
+  #X=as.data.frame(X_ex)
+  out <- MuSCI_ConformalCI_MuS(X,Y,X_ex,Y_ex,T,T_ex,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+####                  conf.score="ASR",
+                  conf.score,
+                  ps.Library="SL.glm",
+                  m.Library="SL.glm",
+                  p1=trainprop,#0.5
+                  seed=10012) 
+  ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  if((B==1) & (method == "Sweight" | method == "Dweight")){
+    
+  #summary for single split
+  ind <- (Ytest<unlist(out$rights))&(Ytest>unlist(out$lefts))
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  #####  ##### PATCH 6 fix: dead code (rep(1,5) doesn't match real-data Xtest cols).
+  #  ALOrac[s_nrep] <- mean((1+Dtest)*(cbind(1,as.matrix(Xtest))%*%rep(1,5))*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }else if((B>1) & (method == "BootSweight" | method == "BootDweight")){
+    
+  #summary for multiple split
+  ind <- NULL
+  for(k in 1:ntest){
+    NInt <- length(out$lefts[k])
+    flag <- unlist(lapply(seq(1:NInt), function(x) return((out$lefts[[k]][x]<Ytest[k])&(Ytest[k]<out$rights[[k]][x]))))
+    ind[k] <- (sum(flag)>0)
+  }
+  sum(ind)/ntest
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  ####ALOrac[s_nrep] <- mean((1+Dtest)*(1+Xtest[,1]+Xtest[,2]+Xtest[,3]+Xtest[,4])*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }
+  
+  print(CovProb[s_nrep])
+  print(AveLeng[s_nrep])
+  print(s_nrep)
+  r0[s_nrep]=out$r0
+}
+
+#save.image("SS_low_BootSweight.Rdata")
+
+CP_low_EIF_MSource_localASR_BootSweight <- unlist(CovProb)
+AL_low_EIF_MSource_localASR_BootSweight <- unlist(AveLeng)
+r0_low_EIF_MSource_localASR_BootSweight<- unlist(r0)
+
+summary(out)
+out_lefts=NULL
+for(ii in 1:length(out$lefts)){
+  if(length(out$lefts[[ii]])<1){
+    out_lefts=c(out_lefts,NA)
+  }else{
+    #out_lefts=c(out_lefts,out$lefts[[ii]][1])
+    out_lefts=c(out_lefts,min(out$lefts[[ii]]))
+  }
+}
+out_rights=NULL
+for(ii in 1:length(out$rights)){
+  if(length(out$rights[[ii]])<1){
+    out_rights=c(out_rights,NA)
+  }else{
+    #out_rights=c(out_rights,out$rights[[ii]][1])
+    out_rights=c(out_rights,max(out$rights[[ii]][1]))
+  }
+}
+
+out_lefts0=out_lefts
+out_rights0=out_rights
+##### PATCH 3: capture point estimate (Yhat_test/pred_y0) for arm 0
+mu_hat0 <- out$mu_hat
+##### END PATCH 3
+
+##### PATCH 2: extract pooled intervals (tCOPP-EIF(P)) for UC arm
+##### from out$lefts_pool / out$rights_pool. Same flatten-list-to-vector logic
+##### as for the federated intervals above.
+out_lefts_pool=NULL
+for (ii in 1:length(out$lefts_pool)) {
+  if (length(out$lefts_pool[[ii]]) < 1) {
+    out_lefts_pool=c(out_lefts_pool, NA)
+  } else {
+    out_lefts_pool=c(out_lefts_pool, min(out$lefts_pool[[ii]]))
+  }
+}
+out_rights_pool=NULL
+for (ii in 1:length(out$rights_pool)) {
+  if (length(out$rights_pool[[ii]]) < 1) {
+    out_rights_pool=c(out_rights_pool, NA)
+  } else {
+    out_rights_pool=c(out_rights_pool, max(out$rights_pool[[ii]][1]))
+  }
+}
+out_lefts_pool0=out_lefts_pool
+out_rights_pool0=out_rights_pool
+##### END PATCH 2 (UC pooled extraction)
+#out_lefts0=out_lefts
+#out_rights0=out_rights
+
+##### PATCH 4: SECOND HALF DISABLED — was the all-UC sensitivity run (Deta = c(6,...))
+##### kept visible inside if(FALSE) for reference; runnable copy lives in sensitivity chunk at end of file.
+##### PATCH 9: smooth severity-adaptive policy run (single pass; saves *_1/_smooth).
+Deta <- Deta_smooth  ##### PATCH 9: smooth severity-adaptive SOFA policy (single run)
+for (s_nrep in 1:nrep) {
+  
+  Xtest=as.matrix(Xtest)
+  
+  ####generate all data with sample size Ntl
+  ####X_N <- matrix(runif(Ntl * d), nrow = Ntl, ncol = d)
+  ####tp_T_N <- exp(cbind(1,X_N)%*%Teta)/(1+exp(cbind(1,X_N)%*%Teta))
+  ####T_N <-rbinom(n = Ntl, size = 1, prob=tp_T_N)
+  ####Y_N <- genY_singlestage(X_N,T_N)
+  
+  #generate test data
+  ####ntest <- 10000
+  ####m=ntest
+  ####Xtest <- matrix(runif(ntest * d), nrow = ntest, ncol = d)
+  tp_D_test <- exp(cbind(1,as.matrix(Xtest))%*%Deta)/(1+exp(cbind(1,Xtest)%*%Deta))
+  Dtest <- rbinom(n = ntest, size = 1, prob=tp_D_test)
+  ##### PATCH 1.3: real Y not available at test time. Coverage computed later vs upmc$dead_60.
+  Ytest <- NULL
+  
+  #for (i in 1:ex_site_num){
+   # X_ex_site <- matrix(runif(ex_site_size * d), nrow = ex_site_size, ncol = d)
+    #X_ex_site_df = data.frame(X_ex_site)
+    #X_ex_site_df$Site=i+1
+    #tp_T_ex_site <- exp(cbind(1,X_ex_site)%*%Teta)/(1+exp(cbind(1,X_ex_site)%*%Teta))
+    #T_ex_site <-rbinom(n = ex_site_size, size = 1, prob=tp_T_ex_site)
+    #Y_ex_site <- genY_singlestage_ex(X_ex_site,T_ex_site,i+1)
+    #if(i>1){
+    #  X_ex=rbind(X_ex,X_ex_site_df)
+    #  T_ex=c(T_ex,T_ex_site)
+    #  Y_ex=c(Y_ex,Y_ex_site)
+    #}
+    #if(i==1){
+    #  X_ex=X_ex_site_df
+    #  T_ex=c(T_ex_site)
+    #  Y_ex=c(Y_ex_site)
+    #}
+  #}
+  
+  #for (i in 1:ex_site_num){
+  for (i in 1:length(sitenames_ex)){
+    #X_ex_site <- matrix(runif(ex_site_size * d), nrow = ex_site_size, ncol = d)
+    X_ex_site <- X_all[X_all_sitename==sitenames_ex[i],1:(ncol(X_all)-1)]
+    X_ex_site_df = data.frame(X_ex_site)
+    X_ex_site_df$Site=i+1
+    #tp_T_ex_site <- exp(cbind(1,X_ex_site)%*%Teta)/(1+exp(cbind(1,X_ex_site)%*%Teta))
+    #T_ex_site <-rbinom(n = ex_site_size, size = 1, prob=tp_T_ex_site)
+    T_ex_site <-T_all[X_all_sitename==sitenames_ex[i]]
+    Y_ex_site <-Y_all[X_all_sitename==sitenames_ex[i]]
+    #Y_ex_site <- genY_singlestage_ex(X_ex_site,T_ex_site,i+1)[,1]
+    if(i>1){
+      X_ex=rbind(X_ex,X_ex_site_df)
+      T_ex=c(T_ex,T_ex_site)
+      Y_ex=c(Y_ex,Y_ex_site)
+    }
+    if(i==1){
+      X_ex=X_ex_site_df
+      T_ex=c(T_ex_site)
+      Y_ex=c(Y_ex_site)
+    }
+  }
+
+  
+  # Generate rwe 
+  #delta.is.one.ind <- sample(N, size=m)
+  #x.in.rwe <- x[delta.is.one.ind, ]
+  #####generate data
+  # Generate rct 
+  ####alphas <- as.matrix(c(1.35, -4,-4, 0,0), d+1, 1) 
+  ####alphas <- as.matrix(c(-1.86, 0,0, rep(0, d-2)), d+1, 1) 
+  #delta.tilde <- rbinom(Ntl, 1, delta.tilde.prob(cbind(1,X_N), alphas)) 
+  #n <- sum(delta.tilde)## sample size in rct n=2223
+  #print(n)
+  #delta.tilde.is.one.ind <- which(delta.tilde==1)
+  #X <- X_N[delta.tilde.is.one.ind, ]
+  #tp_T <- tp_T_N[delta.tilde.is.one.ind]
+  #T <- T_N[delta.tilde.is.one.ind]
+  #Y <- Y_N[delta.tilde.is.one.ind]
+  
+  wttl <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rct
+  wttl_test <- learn_weights(X, Xtest, w.method=1,  Ntl)$w.tilde.rwe
+  #w.method: 1 unweighted; 2 para1; 3 para2; 4 np
+  ####this is unweighted method
+  ####wttl <- wttl/sum(wttl)
+  ####????how to standardize wttl?
+
+  
+  Xtest <- as.data.frame(Xtest)
+  weighted <- TRUE
+  ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow)
+    ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  ####out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+####                  conf.score="ASR",
+  ####                conf.score,
+  ####                ps.Library="SL.glm",
+    ####              m.Library="SL.glm",
+      ####            p1=trainprop,#0.5
+        ####          seed=10012) 
+    out <- MuSCI_ConformalCI_MuS(X,Y,X_ex,Y_ex,T,T_ex,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+####                  conf.score="ASR",
+                  conf.score,
+                  ps.Library="SL.glm",
+                  m.Library="SL.glm",
+                  p1=trainprop,#0.5
+                  seed=10012) 
+  #out <- MuSCI_ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,
+   #              conf.score,
+  #                ps.Library="SL.glm",
+  #                m.Library="SL.glm",
+  #                p1=trainprop,#0.5
+  #                 seed=10012) 
+  ####out <- ConformalCI(X,Y,T,Deta,Xtest,method,B,trainprop,psfun,psparams,outfun,outparams,quantiles,type,side,weighted,alpha,wthigh,wtlow,wttl,wttl_test)
+  if((B==1) & (method == "Sweight" | method == "Dweight")){
+    
+  #summary for single split
+  ind <- (Ytest<unlist(out$rights))&(Ytest>unlist(out$lefts))
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  #####  ##### PATCH 6 fix: dead code (rep(1,5) doesn't match real-data Xtest cols).
+  #  ALOrac[s_nrep] <- mean((1+Dtest)*(cbind(1,as.matrix(Xtest))%*%rep(1,5))*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }else if((B>1) & (method == "BootSweight" | method == "BootDweight")){
+    
+  #summary for multiple split
+  ind <- NULL
+  for(k in 1:ntest){
+    NInt <- length(out$lefts[k])
+    flag <- unlist(lapply(seq(1:NInt), function(x) return((out$lefts[[k]][x]<Ytest[k])&(Ytest[k]<out$rights[[k]][x]))))
+    ind[k] <- (sum(flag)>0)
+  }
+  sum(ind)/ntest
+  CovProb[s_nrep] <- sum(ind)/ntest
+  AveLeng[s_nrep] <- mean(out$Lens)
+  ####ALOrac[s_nrep] <- mean((1+Dtest)*(1+Xtest[,1]+Xtest[,2]+Xtest[,3]+Xtest[,4])*(qnorm(1-alpha/2,0,1)-qnorm(alpha/2,0,1)))
+  }
+  
+  print(CovProb[s_nrep])
+  print(AveLeng[s_nrep])
+  print(s_nrep)
+  r0[s_nrep]=out$r0
+}
+
+#save.image("SS_low_BootSweight.Rdata")
+
+CP_low_EIF_MSource_localASR_BootSweight <- unlist(CovProb)
+AL_low_EIF_MSource_localASR_BootSweight <- unlist(AveLeng)
+r0_low_EIF_MSource_localASR_BootSweight<- unlist(r0)
+
+summary(out)
+out_lefts=NULL
+for(ii in 1:length(out$lefts)){
+  if(length(out$lefts[[ii]])<1){
+    out_lefts=c(out_lefts,NA)
+  }else{
+    #out_lefts=c(out_lefts,out$lefts[[ii]][1])
+    out_lefts=c(out_lefts,min(out$lefts[[ii]]))
+  }
+}
+out_rights=NULL
+for(ii in 1:length(out$rights)){
+  if(length(out$rights[[ii]])<1){
+    out_rights=c(out_rights,NA)
+  }else{
+    #out_rights=c(out_rights,out$rights[[ii]][1])
+    out_rights=c(out_rights,max(out$rights[[ii]][1]))
+  }
+}
+
+out_lefts1=out_lefts
+out_rights1=out_rights
+##### PATCH 3: capture point estimate (Yhat_test/pred_y0) for arm 1
+mu_hat1 <- out$mu_hat
+##### END PATCH 3
+
+##### PATCH 2: extract pooled intervals (tCOPP-EIF(P)) for EGDT arm
+##### from out$lefts_pool / out$rights_pool. Same flatten-list-to-vector logic
+##### as for the federated intervals above.
+out_lefts_pool=NULL
+for (ii in 1:length(out$lefts_pool)) {
+  if (length(out$lefts_pool[[ii]]) < 1) {
+    out_lefts_pool=c(out_lefts_pool, NA)
+  } else {
+    out_lefts_pool=c(out_lefts_pool, min(out$lefts_pool[[ii]]))
+  }
+}
+out_rights_pool=NULL
+for (ii in 1:length(out$rights_pool)) {
+  if (length(out$rights_pool[[ii]]) < 1) {
+    out_rights_pool=c(out_rights_pool, NA)
+  } else {
+    out_rights_pool=c(out_rights_pool, max(out$rights_pool[[ii]][1]))
+  }
+}
+out_lefts_pool1=out_lefts_pool
+out_rights_pool1=out_rights_pool
+##### END PATCH 2 (EGDT pooled extraction)
+#upmcIntv=data.frame(out_lefts,out_rights,upmc$hosp_los,upmc$icu_los,upmc$icu_ever)
+####upmcIntv=data.frame(out_lefts0,out_rights0,out_lefts1,out_rights1,upmc$hosp_los,upmc$icu_los,upmc$icu_ever)
+####write.csv(upmcIntv,"upmcInterval2025032705alpha.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_20250403.csv")
+#hist(upmc$icu_los)
+sum(out_lefts<=upmc$dead_60&out_rights>=upmc$dead_60,na.rm = TRUE)/nrow(upmc)#0.662 #0.91 #0.91 #0.57 #1
+#out_lefts0=out_lefts
+#out_rights0=out_rights
+#out_lefts1=out_lefts
+#out_rights1=out_rights
+##### PATCH 9: NO splicing for Block B. The _sofa and _pool_sofa columns ARE the
+##### smooth severity-adaptive policy intervals (the _1/_smooth run; federated and
+##### pooled). The _egdt / _pool_egdt columns (the _0 run, constant all-EGDT) are
+##### retained only for the constant-policy figure.
+upmcIntv = data.frame(
+  out_lefts_egdt       = out_lefts0,       out_rights_egdt      = out_rights0,
+  out_lefts_smooth     = out_lefts1,       out_rights_smooth    = out_rights1,
+  out_lefts_pool_egdt  = out_lefts_pool0,  out_rights_pool_egdt = out_rights_pool0,
+  out_lefts_pool_smooth= out_lefts_pool1,  out_rights_pool_smooth = out_rights_pool1,
+  mu_hat_egdt          = mu_hat0,          mu_hat_smooth        = mu_hat1,
+  ##### PATCH 9: _sofa columns alias the smooth-policy run (_1); no splicing.
+  out_lefts_sofa       = out_lefts1,
+  out_rights_sofa      = out_rights1,
+  out_lefts_pool_sofa  = out_lefts_pool1,
+  out_rights_pool_sofa = out_rights_pool1,
+  mu_hat_sofa          = mu_hat1,
+  upmc.dead_60         = upmc$dead_60,
+  upmc.death_days      = upmc$death_days,
+  upmc.dead_90         = upmc$dead_90
+)
+#upmcIntv_eif_surv=upmcIntv
+####write.csv(upmcIntv,"upmcInterval2025032705alpha.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_20250403.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_survival_alpha0.9_20250424.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_survival_alpha0.5_20250424.csv")
+#write.csv(upmcIntv,"upmcInterval_EIF_ASR_BMS20_survival_alpha0.5_20250919.csv")
+#write.csv(upmcIntv,"upmcInterval_EIF_ASR_BMS20_survival_alpha0.5_Msource_20251023.csv")
+####write.csv(upmcIntv,"upmcInterval_EIF_ASR_BMS20_survival_alpha0.5_MsourceNE_20251023.csv")
+```
+
+```{r block-b-eifi-eifm-snapshot}
+##### Snapshot Block B tCOPP-EIF(I) (out_lefts0/rights0)
+##### and tCOPP-EIF(M) (out_lefts1/rights1) intervals for plotting.
+upmcIntv_blockB <- upmcIntv
+```
+## Plot helper (defines make_panel for the figure chunks below)
+```{r plot-helper}
+library(ggplot2)
+##### Helper: build a ranked-interval ggplot for one method.
+##### PATCH 3: introduced black dot at interval midpoint as displayed point estimate.
+##### PATCH 3 HOTFIX (Option C): switched from mu_hat to (lwr+upr)/2 for visual coherence.
+##### PATCH 5: optional sofa_high_col argument adds a colored stripe under x-axis.
+##### PATCH 6: REMOVED the displayed black dot. mu_hat is still computed and returned
+##### in upmcIntv as a diagnostic. The interval midpoint is still computed internally
+##### (df$.mid) because we use it for within-panel ranking, but it is no longer drawn
+##### on the plot. The mu_col argument is kept for backward compatibility but is unused.
+make_panel <- function(df, lwr_col, upr_col, mu_col, method_label, panel_color,
+                       sofa_high_col = NULL, cov_full = NULL, sofa_val_col = NULL,
+                       lwr_raw_col = NULL, upr_raw_col = NULL, al_full = NULL) {
+  ##### Request-3: al_full (optional) is the method's average interval length on
+  ##### the FULL target sample (computed by the caller on the [0,1]-clipped
+  ##### intervals, matching the AL convention used elsewhere). When supplied it
+  ##### is printed in the panel title next to coverage, so both CP and AL travel
+  ##### with each plot and no separate summary table is needed.
+  df$id <- seq_len(nrow(df))
+  # Sort patients by interval midpoint (left to right: low predicted risk to high)
+  ord <- order((df[[lwr_col]] + df[[upr_col]]) / 2)
+  df <- df[ord, ]
+  df$id <- seq_len(nrow(df))
+  df$.mid <- (df[[lwr_col]] + df[[upr_col]]) / 2  # used for ranking only; not plotted
+  ##### Request-2: an interval is colored ONLY when it covers THIS patient's
+  ##### actual observed outcome upmc.dead_60 (the correct value, 0 = survived or
+  ##### 1 = died) -- i.e. correct coverage of the true 0/1 label. It is faded
+  ##### gray otherwise. The color is NOT keyed to whether the interval merely
+  ##### touches 0 or 1 in the abstract, but to whether it covers the RIGHT one
+  ##### for that patient, so the colored/gray split is exactly the coverage
+  ##### event. Coverage for coloring uses the RAW interval columns when supplied,
+  ##### so the colors match the reported coverage number (also computed on raw
+  ##### intervals). This is a display encoding only: every displayed patient is
+  ##### still shown, nothing is filtered, and the panel title still reports the
+  ##### full-sample coverage.
+  .lc <- if (!is.null(lwr_raw_col) && lwr_raw_col %in% names(df)) lwr_raw_col else lwr_col
+  .uc <- if (!is.null(upr_raw_col) && upr_raw_col %in% names(df)) upr_raw_col else upr_col
+  df$.covered <- (df[[.lc]] <= df$upmc.dead_60) & (df[[.uc]] >= df$upmc.dead_60)
+  df$.covered[is.na(df$.covered)] <- FALSE
+  df$.cov_grp <- ifelse(df$.covered, "covered", "missed")
+  ##### PATCH 6 fix: if cov_full is supplied, use it for the title so the panel
+  ##### title matches the full-population coverage that gets reported in tables.
+  ##### Otherwise fall back to subsample coverage (computed on df), which is
+  ##### what was shown previously but can disagree with the table by ~1-2 pp.
+  if (is.null(cov_full)) {
+    cov_for_title <- mean(df[[lwr_col]] <= df$upmc.dead_60 & df[[upr_col]] >= df$upmc.dead_60, na.rm = TRUE)
+  } else {
+    cov_for_title <- cov_full
+  }
+
+  ##### PATCH 9: SOFA severity stripe under the x-axis.
+  ##### If sofa_val_col is supplied -> CONTINUOUS gradient (light gray = low
+  ##### SOFA, dark red = high SOFA), visualizing the ranked severity-adaptive
+  ##### policy. Otherwise fall back to the legacy binary stripe (sofa_high_col).
+  stripe_layer <- NULL
+  if (!is.null(sofa_val_col) && sofa_val_col %in% names(df)) {
+    sv  <- as.numeric(df[[sofa_val_col]])
+    rng <- range(sv, na.rm = TRUE)
+    sv01 <- (sv - rng[1]) / max(1e-8, diff(rng))
+    sv01[is.na(sv01)] <- 0
+    pal  <- grDevices::colorRamp(c("gray85", "firebrick"))
+    cols <- grDevices::rgb(pal(sv01), maxColorValue = 255)
+    stripe_df <- data.frame(xmin = df$id - 0.5, xmax = df$id + 0.5,
+                            ymin = -0.07, ymax = -0.03)
+    stripe_layer <- geom_rect(data = stripe_df,
+                              aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                              fill = cols, inherit.aes = FALSE)
+  } else if (!is.null(sofa_high_col) && sofa_high_col %in% names(df)) {
+    stripe_df <- data.frame(
+      xmin = df$id - 0.5, xmax = df$id + 0.5, ymin = -0.07, ymax = -0.03,
+      sofa_high = as.logical(df[[sofa_high_col]])
+    )
+    stripe_df$fill <- ifelse(stripe_df$sofa_high, "firebrick", "gray70")
+    stripe_layer <- geom_rect(data = stripe_df,
+                              aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                              fill = stripe_df$fill, inherit.aes = FALSE)
+  }
+
+  p <- ggplot(df, aes(x = id))
+  if (!is.null(stripe_layer)) p <- p + stripe_layer
+  p +
+    geom_errorbar(aes(ymin = .data[[lwr_col]], ymax = .data[[upr_col]],
+                      color = .cov_grp, alpha = .cov_grp), width = 0.5) +
+    scale_color_manual(values = c(covered = panel_color, missed = "gray70"),
+                       guide = "none") +
+    scale_alpha_manual(values = c(covered = 0.80, missed = 0.30),
+                       guide = "none") +
+    ##### PATCH 6: black-dot midpoint geom_point removed
+    geom_point(aes(y = upmc.dead_60), color = "red2", size = 0.6, shape = 4, stroke = 0.7) +
+    ##### Request-3: panel title carries CP and (when supplied) AL, so both
+    ##### metrics live on the plot and the separate CP/AL summary table is
+    ##### unnecessary.
+    labs(title = {
+           .cp <- paste0("CP ", formatC(cov_for_title, format = "f", digits = 3))
+           if (!is.null(al_full)) {
+             paste0(method_label, "  (", .cp,
+                    ", AL ", formatC(al_full, format = "f", digits = 3), ")")
+           } else {
+             paste0(method_label, "  (", .cp, ")")
+           }
+         },
+         x = "Ranked patients (subsample)", y = "60-day mortality") +
+    ylim(-0.10, 1.02) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5),
+          axis.text.x = element_text(angle = 90, hjust = 1))
+}
+
+```
+
+
+## Clipping diagnostic (Option 2)
+
+Conformal intervals are constructed on the score scale and can extend
+below 0 or above 1, even though the outcome `dead_60` is binary. We adopt
+the following convention: the displayed plot intervals are clipped to
+$[0, 1]$; **average length is reported on these $[0,1]$-clipped intervals**
+(the actual informative width, since the part of an interval below 0 or
+above 1 carries no information for a probability/binary outcome and would
+otherwise inflate the reported length); and **coverage is computed on the
+raw (unclipped) intervals**. Clipping to $[0,1]$ cannot change whether the
+binary points 0 or 1 fall inside an interval, so coverage is identical
+whether measured on raw or clipped intervals --- the two reporting choices
+are mutually consistent. The chunk below quantifies how often clipping
+changes the interval.
+
+```{r clipping-diagnostic}
+##### CLEANUP: clipping diagnostic for Option 2.
+##### Reports, per method, how many intervals would have been altered by
+##### clipping, average length pre/post clipping, and coverage pre/post.
+.diag <- function(lwr, upr, y) {
+  n <- length(lwr)
+  ok <- !is.na(lwr) & !is.na(upr)
+  lwr <- lwr[ok]; upr <- upr[ok]; y <- y[ok]
+  clipped <- lwr < 0 | upr > 1
+  len_raw <- upr - lwr
+  lwr_c <- pmin(1, pmax(0, lwr))
+  upr_c <- pmin(1, pmax(0, upr))
+  len_clp <- upr_c - lwr_c
+  cov_raw <- mean(lwr   <= y & upr   >= y)
+  cov_clp <- mean(lwr_c <= y & upr_c >= y)
+  data.frame(
+    n               = n,
+    n_with_clipping = sum(clipped),
+    pct_clipped     = round(100 * mean(clipped), 1),
+    avg_len_raw     = round(mean(len_raw), 3),
+    avg_len_clipped = round(mean(len_clp), 3),
+    coverage_raw    = round(cov_raw, 3),
+    coverage_clipped= round(cov_clp, 3)
+  )
+}
+.y <- upmcIntv_blockA_W$upmc.dead_60
+diag_tbl <- rbind(
+  cbind(method = "tCOPP-W",       .diag(upmcIntv_blockA_W$out_lefts_sofa,    upmcIntv_blockA_W$out_rights_sofa,    .y)),
+  cbind(method = "tCOPP-EIF(I)",  .diag(upmcIntv_blockA_EIFI$out_lefts_sofa, upmcIntv_blockA_EIFI$out_rights_sofa, .y)),
+  cbind(method = "tCOPP-EIF(M)",  .diag(upmcIntv_blockB$out_lefts_sofa,      upmcIntv_blockB$out_rights_sofa,      .y)),
+  cbind(method = "tCOPP-EIF(P)",  .diag(upmcIntv_blockB$out_lefts_pool_sofa, upmcIntv_blockB$out_rights_pool_sofa, .y))
+)
+print(diag_tbl, row.names = FALSE)
+```
+
+## mu_hat calibration diagnostic (Patch 7.2)
+
+A general sanity check on the conditional-mean predictions used as the
+midpoint of each interval. For each method, it prints the distribution
+of mu_hat (per-patient point estimate) and a coarse calibration table
+(predicted-bin x observed-mean). The model used in the active code
+path is the ridge regression in the score-functions chunk; mu_hat should
+spread across the interior, roughly tracking the observed mortality
+rate (~0.18 on the UPMC sample). If mu_hat is bunched at 0 or 1, that
+would indicate fitted probabilities have collapsed and the outcome
+model needs more regularization or more training data.
+
+```{r mu-hat-calibration}
+##### PATCH 7.2: mu_hat calibration diagnostic (retained from 7.1)
+.mu_summary <- function(mu, y, label) {
+  ok <- !is.na(mu)
+  mu <- mu[ok]; y <- y[ok]
+  qs <- quantile(mu, c(0.05, 0.25, 0.5, 0.75, 0.95))
+  cat(sprintf("\n%s (n=%d): mean=%.3f, sd=%.3f, q05=%.3f, q25=%.3f, q50=%.3f, q75=%.3f, q95=%.3f\n",
+              label, length(mu), mean(mu), sd(mu),
+              qs[1], qs[2], qs[3], qs[4], qs[5]))
+  cat(sprintf("  observed outcome mean = %.3f; predicted mean = %.3f (gap = %+.3f)\n",
+              mean(y), mean(mu), mean(mu) - mean(y)))
+  # Coarse calibration table: 5 bins of predicted probability
+  brks <- unique(quantile(mu, seq(0, 1, by = 0.2), na.rm = TRUE))
+  if (length(brks) >= 3) {
+    bin <- cut(mu, breaks = brks, include.lowest = TRUE)
+    tbl <- data.frame(
+      bin       = levels(bin),
+      n         = as.numeric(table(bin)),
+      pred_mean = round(tapply(mu, bin, mean),  3),
+      obs_mean  = round(tapply(y,  bin, mean),  3)
+    )
+    cat("  calibration (predicted-bin x observed):\n")
+    print(tbl, row.names = FALSE)
+  }
+}
+.mu_summary(upmcIntv_blockA_W$mu_hat_sofa,    upmc$dead_60, "tCOPP-W   ")
+.mu_summary(upmcIntv_blockA_EIFI$mu_hat_sofa, upmc$dead_60, "tCOPP-EIF(I)")
+.mu_summary(upmcIntv_blockB$mu_hat_sofa,      upmc$dead_60, "tCOPP-EIF(M/P)")
+```
+
+
+
+
+
+
+
+## Mortality figure — Block B
+```{r plot-block-b, fig.width=12, fig.height=4.5}
+##### PATCH 2: Block B mortality figure — three panels for the EGDT evaluation policy
+##### Panel 1: tCOPP-EIF(I)  — single-source EIF on NE only (uses upmcIntv_blockA_EIFI)
+##### Panel 2: tCOPP-EIF(M)  — multi-source EIF (federated): NE internal, SE+W external
+##### Panel 3: tCOPP-EIF(P)  — multi-source EIF (pooled with site indicator)
+##### All three panels show predicted 60-day mortality intervals on UPMC patients
+##### under the EGDT evaluation policy (Deta = c(-6, 0, ..., 0); pi_e(EGDT|X) ~ 1).
+#####
+##### To plot the UC arm instead, swap suffix _1 -> _0 throughout
+##### (out_lefts1 -> out_lefts0, etc.) and update the hint titles.
+
+library(ggplot2)
+##### patchwork is loaded in the load-packages chunk at the top of the file
+
+# Pull the relevant intervals from each block snapshot. EIF(I) comes from
+# Block A (single-source, NE only); EIF(M) and EIF(P) come from Block B.
+# Clip all intervals to [0, 1] since the outcome is a probability.
+##### PATCH 9: under the smooth severity-adaptive policy, each snapshot has a
+##### single set of policy interval columns (_sofa = the _1/_smooth run). The
+##### policy is patient-specific: EGDT probability increases with SOFA.
+##### Note: EIF(I) uses Block A's outcome model (NE training data only);
+##### EIF(M) and EIF(P) share Block B's outcome model. So mu_hat differs
+##### between Panel 1 and Panels 2/3, but Panels 2 and 3 share the same mu_hat.
+plotdat <- data.frame(
+  upmc.dead_60 = upmcIntv_blockB$upmc.dead_60,
+
+  # tCOPP-EIF(I): from Block A's EIF(I) snapshot under SOFA policy
+  EIFI_lwr = pmin(1, pmax(0, upmcIntv_blockA_EIFI$out_lefts_sofa)),
+  EIFI_lwr_raw = upmcIntv_blockA_EIFI$out_lefts_sofa,
+  EIFI_upr = pmin(1, pmax(0, upmcIntv_blockA_EIFI$out_rights_sofa)),
+  EIFI_upr_raw = upmcIntv_blockA_EIFI$out_rights_sofa,
+  EIFI_mu  = pmin(1, pmax(0, upmcIntv_blockA_EIFI$mu_hat_sofa)),
+
+  # tCOPP-EIF(M): from Block B's federated output under SOFA policy
+  EIFM_lwr = pmin(1, pmax(0, upmcIntv_blockB$out_lefts_sofa)),
+  EIFM_lwr_raw = upmcIntv_blockB$out_lefts_sofa,
+  EIFM_upr = pmin(1, pmax(0, upmcIntv_blockB$out_rights_sofa)),
+  EIFM_upr_raw = upmcIntv_blockB$out_rights_sofa,
+  EIFM_mu  = pmin(1, pmax(0, upmcIntv_blockB$mu_hat_sofa)),
+
+  # tCOPP-EIF(P): from Block B's pooled output under SOFA policy
+  EIFP_lwr = pmin(1, pmax(0, upmcIntv_blockB$out_lefts_pool_sofa)),
+  EIFP_lwr_raw = upmcIntv_blockB$out_lefts_pool_sofa,
+  EIFP_upr = pmin(1, pmax(0, upmcIntv_blockB$out_rights_pool_sofa)),
+  EIFP_upr_raw = upmcIntv_blockB$out_rights_pool_sofa,
+  EIFP_mu  = pmin(1, pmax(0, upmcIntv_blockB$mu_hat_sofa)),  # same as EIFM_mu by design
+
+  ##### PATCH 5: per-patient SOFA threshold indicator for the colored stripe.
+  ##### Pulled directly from upmc (which is in scope from the data-load chunk).
+  ##### Patient row order matches upmcIntv_blockB by construction.
+  sofa_high = as.logical(upmc$sofa_total >= 4)
+)
+
+# Subsample for legibility (every 30th patient when sorted by observed outcome)
+plot_subsample <- plotdat[order(plotdat$upmc.dead_60)[seq(1, nrow(plotdat), by = 30)], ]
+
+
+##### PATCH 5: pass sofa_high column so each panel shows the SOFA stripe
+##### PATCH 6 fix: compute full-population coverage so plot titles match table numbers
+cov_full_b_EIFI <- mean(plotdat$EIFI_lwr_raw <= plotdat$upmc.dead_60 & plotdat$EIFI_upr_raw >= plotdat$upmc.dead_60, na.rm = TRUE)
+cov_full_b_EIFM <- mean(plotdat$EIFM_lwr_raw <= plotdat$upmc.dead_60 & plotdat$EIFM_upr_raw >= plotdat$upmc.dead_60, na.rm = TRUE)
+cov_full_b_EIFP <- mean(plotdat$EIFP_lwr_raw <= plotdat$upmc.dead_60 & plotdat$EIFP_upr_raw >= plotdat$upmc.dead_60, na.rm = TRUE)
+
+p1 <- make_panel(plot_subsample, "EIFI_lwr", "EIFI_upr", "EIFI_mu", "tCOPP-EIF(I)", "deepskyblue", sofa_high_col = "sofa_high", cov_full = cov_full_b_EIFI)
+p2 <- make_panel(plot_subsample, "EIFM_lwr", "EIFM_upr", "EIFM_mu", "tCOPP-EIF(M)", "darkorange",  sofa_high_col = "sofa_high", cov_full = cov_full_b_EIFM)
+p3 <- make_panel(plot_subsample, "EIFP_lwr", "EIFP_upr", "EIFP_mu", "tCOPP-EIF(P)", "purple3",     sofa_high_col = "sofa_high", cov_full = cov_full_b_EIFP)
+
+# Combine with patchwork
+##### PATCH 5: include a caption that explains the SOFA stripe
+(p1 | p2 | p3) +
+  patchwork::plot_annotation(
+    caption = paste(
+      "Stripe under x-axis: red = SOFA \u2265 4 (high severity, EGDT-favored under SOFA policy);",
+      "gray = SOFA < 4 (low severity, UC-favored).",
+      "Red \u00d7 = observed 60-day outcome.",
+      sep = "\n"
+    ),
+    theme = theme(plot.caption = element_text(hjust = 0.5, size = 8))
+  )
+
+##### Diagnostic tables: coverage by observed outcome, per method
+##### CLEANUP (clipping Option 2): compute coverage from the RAW (unclipped)
+##### intervals so these 2x2 tables match cov_full_b_* and the summary tables.
+cat("\n=== tCOPP-EIF(I) coverage by outcome ===\n")
+print(table(
+  covered = (plotdat$EIFI_lwr_raw <= plotdat$upmc.dead_60 & plotdat$EIFI_upr_raw >= plotdat$upmc.dead_60),
+  observed = plotdat$upmc.dead_60
+))
+cat("\n=== tCOPP-EIF(M) coverage by outcome ===\n")
+print(table(
+  covered = (plotdat$EIFM_lwr_raw <= plotdat$upmc.dead_60 & plotdat$EIFM_upr_raw >= plotdat$upmc.dead_60),
+  observed = plotdat$upmc.dead_60
+))
+cat("\n=== tCOPP-EIF(P) coverage by outcome ===\n")
+print(table(
+  covered = (plotdat$EIFP_lwr_raw <= plotdat$upmc.dead_60 & plotdat$EIFP_upr_raw >= plotdat$upmc.dead_60),
+  observed = plotdat$upmc.dead_60
+))
+```
+
+## Mortality figure — Block A
+```{r plot-block-a, fig.width=10, fig.height=4.5}
+##### PATCH 4: Block A under SOFA policy. Two panels comparing single-source
+##### methods (tCOPP-W and tCOPP-EIF(I)) on the same patients under the same
+##### evaluation policy. The previous "UC vs EGDT" two-panel layout doesn't
+##### apply because under SOFA policy there's a single per-patient policy.
+plotdat_a <- data.frame(
+  upmc.dead_60 = upmcIntv_blockA_W$upmc.dead_60,
+
+  # tCOPP-W (target-only weighted conformal)
+  W_lwr = pmin(1, pmax(0, upmcIntv_blockA_W$out_lefts_sofa)),
+  W_lwr_raw = upmcIntv_blockA_W$out_lefts_sofa,
+  W_upr = pmin(1, pmax(0, upmcIntv_blockA_W$out_rights_sofa)),
+  W_upr_raw = upmcIntv_blockA_W$out_rights_sofa,
+  W_mu  = pmin(1, pmax(0, upmcIntv_blockA_W$mu_hat_sofa)),
+
+  # tCOPP-EIF(I) (single-source EIF on NE only)
+  EIFI_lwr = pmin(1, pmax(0, upmcIntv_blockA_EIFI$out_lefts_sofa)),
+  EIFI_lwr_raw = upmcIntv_blockA_EIFI$out_lefts_sofa,
+  EIFI_upr = pmin(1, pmax(0, upmcIntv_blockA_EIFI$out_rights_sofa)),
+  EIFI_upr_raw = upmcIntv_blockA_EIFI$out_rights_sofa,
+  EIFI_mu  = pmin(1, pmax(0, upmcIntv_blockA_EIFI$mu_hat_sofa)),
+
+  ##### PATCH 5: per-patient SOFA threshold indicator for the colored stripe
+  sofa_high = as.logical(upmc$sofa_total >= 4)
+)
+
+plot_subsample_a <- plotdat_a[order(plotdat_a$upmc.dead_60)[seq(1, nrow(plotdat_a), by = 30)], ]
+
+# Reuse the make_panel helper defined in plot-helper above
+##### PATCH 5: pass sofa_high column for the SOFA stripe under x-axis
+##### PATCH 6 fix: compute full-population coverage so plot titles match table numbers
+cov_full_a_W    <- mean(plotdat_a$W_lwr_raw    <= plotdat_a$upmc.dead_60 & plotdat_a$W_upr_raw    >= plotdat_a$upmc.dead_60, na.rm = TRUE)
+cov_full_a_EIFI <- mean(plotdat_a$EIFI_lwr_raw <= plotdat_a$upmc.dead_60 & plotdat_a$EIFI_upr_raw >= plotdat_a$upmc.dead_60, na.rm = TRUE)
+
+p_w    <- make_panel(plot_subsample_a, "W_lwr",    "W_upr",    "W_mu",    "tCOPP-W",       "limegreen",   sofa_high_col = "sofa_high", cov_full = cov_full_a_W)
+p_eifi <- make_panel(plot_subsample_a, "EIFI_lwr", "EIFI_upr", "EIFI_mu", "tCOPP-EIF(I)",  "deepskyblue", sofa_high_col = "sofa_high", cov_full = cov_full_a_EIFI)
+
+##### PATCH 5: caption explaining the SOFA stripe and other plot elements
+(p_w | p_eifi) +
+  patchwork::plot_annotation(
+    caption = paste(
+      "Stripe under x-axis: red = SOFA \u2265 4 (high severity, EGDT-favored under SOFA policy);",
+      "gray = SOFA < 4 (low severity, UC-favored).",
+      "Red \u00d7 = observed 60-day outcome.",
+      sep = "\n"
+    ),
+    theme = theme(plot.caption = element_text(hjust = 0.5, size = 8))
+  )
+
+##### Diagnostic 2x2 tables for Block A
+##### CLEANUP (clipping Option 2): coverage computed on raw (unclipped) intervals.
+plotdat_a$covered_W    <- (plotdat_a$W_lwr_raw    <= plotdat_a$upmc.dead_60 & plotdat_a$W_upr_raw    >= plotdat_a$upmc.dead_60)
+plotdat_a$covered_EIFI <- (plotdat_a$EIFI_lwr_raw <= plotdat_a$upmc.dead_60 & plotdat_a$EIFI_upr_raw >= plotdat_a$upmc.dead_60)
+cat("\n=== Block A tCOPP-W coverage by outcome (SOFA policy) ===\n")
+print(table(covered = plotdat_a$covered_W,    observed = plotdat_a$upmc.dead_60))
+cat("\n=== Block A tCOPP-EIF(I) coverage by outcome (SOFA policy) ===\n")
+print(table(covered = plotdat_a$covered_EIFI, observed = plotdat_a$upmc.dead_60))
+```
+
+
+## Combined 2x2 figure — all four methods under the smooth severity-adaptive policy
+
+```{r plot-combined-2x2, fig.width=12, fig.height=9}
+##### PATCH 9: combined 2x2 panel showing all four methods under the smooth
+##### severity-adaptive SOFA policy. Top row: single-source methods (tCOPP-W, tCOPP-EIF(I)).
+##### Bottom row: multi-source methods (tCOPP-EIF(M), tCOPP-EIF(P)).
+##### tCOPP-EIF(I) appears only here (not duplicated): the "EIF(I)" used in
+##### both Block A and Block B plots earlier was always the same single-source
+##### EIF estimator from upmcIntv_blockA_EIFI.
+
+plotdat_combined <- data.frame(
+  upmc.dead_60 = upmcIntv_blockA_W$upmc.dead_60,
+
+  # tCOPP-W (Block A)
+  W_lwr    = pmin(1, pmax(0, upmcIntv_blockA_W$out_lefts_sofa)),
+  W_lwr_raw = upmcIntv_blockA_W$out_lefts_sofa,
+  W_upr    = pmin(1, pmax(0, upmcIntv_blockA_W$out_rights_sofa)),
+  W_upr_raw = upmcIntv_blockA_W$out_rights_sofa,
+  W_mu     = pmin(1, pmax(0, upmcIntv_blockA_W$mu_hat_sofa)),
+
+  # tCOPP-EIF(I) (single-source, from Block A's EIF(I) snapshot)
+  EIFI_lwr = pmin(1, pmax(0, upmcIntv_blockA_EIFI$out_lefts_sofa)),
+  EIFI_lwr_raw = upmcIntv_blockA_EIFI$out_lefts_sofa,
+  EIFI_upr = pmin(1, pmax(0, upmcIntv_blockA_EIFI$out_rights_sofa)),
+  EIFI_upr_raw = upmcIntv_blockA_EIFI$out_rights_sofa,
+  EIFI_mu  = pmin(1, pmax(0, upmcIntv_blockA_EIFI$mu_hat_sofa)),
+
+  # tCOPP-EIF(M) (multi-source federated, Block B)
+  EIFM_lwr = pmin(1, pmax(0, upmcIntv_blockB$out_lefts_sofa)),
+  EIFM_lwr_raw = upmcIntv_blockB$out_lefts_sofa,
+  EIFM_upr = pmin(1, pmax(0, upmcIntv_blockB$out_rights_sofa)),
+  EIFM_upr_raw = upmcIntv_blockB$out_rights_sofa,
+  EIFM_mu  = pmin(1, pmax(0, upmcIntv_blockB$mu_hat_sofa)),
+
+  # tCOPP-EIF(P) (multi-source pooled, Block B)
+  EIFP_lwr = pmin(1, pmax(0, upmcIntv_blockB$out_lefts_pool_sofa)),
+  EIFP_lwr_raw = upmcIntv_blockB$out_lefts_pool_sofa,
+  EIFP_upr = pmin(1, pmax(0, upmcIntv_blockB$out_rights_pool_sofa)),
+  EIFP_upr_raw = upmcIntv_blockB$out_rights_pool_sofa,
+  EIFP_mu  = pmin(1, pmax(0, upmcIntv_blockB$mu_hat_sofa)),
+
+  # SOFA severity for the gradient stripe (and legacy stratum, unused)
+  sofa_val  = as.numeric(upmc$sofa_total),
+  sofa_high = as.logical(upmc$sofa_total >= 4)
+)
+
+plot_subsample_combined <- plotdat_combined[
+  order(plotdat_combined$upmc.dead_60)[seq(1, nrow(plotdat_combined), by = 30)], ]
+
+##### PATCH 6 fix: compute full-population coverage for each method on
+##### plotdat_combined (all UPMC patients, not the ~218-patient subsample).
+##### Pass these to make_panel so plot titles report the full-sample coverage.
+cov_full_W    <- mean(plotdat_combined$W_lwr_raw    <= plotdat_combined$upmc.dead_60 & plotdat_combined$W_upr_raw    >= plotdat_combined$upmc.dead_60, na.rm = TRUE)
+cov_full_EIFI <- mean(plotdat_combined$EIFI_lwr_raw <= plotdat_combined$upmc.dead_60 & plotdat_combined$EIFI_upr_raw >= plotdat_combined$upmc.dead_60, na.rm = TRUE)
+cov_full_EIFM <- mean(plotdat_combined$EIFM_lwr_raw <= plotdat_combined$upmc.dead_60 & plotdat_combined$EIFM_upr_raw >= plotdat_combined$upmc.dead_60, na.rm = TRUE)
+cov_full_EIFP <- mean(plotdat_combined$EIFP_lwr_raw <= plotdat_combined$upmc.dead_60 & plotdat_combined$EIFP_upr_raw >= plotdat_combined$upmc.dead_60, na.rm = TRUE)
+
+##### Request-3: full-population AVERAGE LENGTH (AL) per method, on the
+##### [0,1]-clipped intervals (the W_lwr/W_upr columns are already clipped), so
+##### AL is the actual informative width and matches the AL convention used in
+##### the manuscript. These scalars are passed to make_panel so both CP and AL
+##### appear in each panel title; a separate CP/AL summary table is no longer
+##### produced.
+al_full_W    <- mean(plotdat_combined$W_upr    - plotdat_combined$W_lwr,    na.rm = TRUE)
+al_full_EIFI <- mean(plotdat_combined$EIFI_upr - plotdat_combined$EIFI_lwr, na.rm = TRUE)
+al_full_EIFM <- mean(plotdat_combined$EIFM_upr - plotdat_combined$EIFM_lwr, na.rm = TRUE)
+al_full_EIFP <- mean(plotdat_combined$EIFP_upr - plotdat_combined$EIFP_lwr, na.rm = TRUE)
+
+# Reuse the make_panel helper (defined in plot-helper above).
+##### Request-1: tCOPP-EIF(P) is a pooled ORACLE (all regions merged with a site
+##### indicator; NOT one of our proposed estimators and with no internal/external
+##### source structure). It is kept only as the bottom-right reference panel so the
+##### comparison of interest is explicit -- our federated multi-source tCOPP-EIF(M)
+##### (bottom-left) against the pooled-oracle upper bound tCOPP-EIF(P) (bottom-right)
+##### -- and its title is tagged "(oracle)" so it is not read as an equal peer of the
+##### three methods we propose. The top row holds the two single-source proposed
+##### methods (tCOPP-W, tCOPP-EIF(I)).
+q1 <- make_panel(plot_subsample_combined, "W_lwr",    "W_upr",    "W_mu",    "tCOPP-W",           "limegreen",   sofa_val_col = "sofa_val", cov_full = cov_full_W,    lwr_raw_col = "W_lwr_raw",    upr_raw_col = "W_upr_raw",    al_full = al_full_W)
+q2 <- make_panel(plot_subsample_combined, "EIFI_lwr", "EIFI_upr", "EIFI_mu", "tCOPP-EIF(I)",      "deepskyblue", sofa_val_col = "sofa_val", cov_full = cov_full_EIFI, lwr_raw_col = "EIFI_lwr_raw", upr_raw_col = "EIFI_upr_raw", al_full = al_full_EIFI)
+q3 <- make_panel(plot_subsample_combined, "EIFM_lwr", "EIFM_upr", "EIFM_mu", "tCOPP-EIF(M)",      "darkorange",  sofa_val_col = "sofa_val", cov_full = cov_full_EIFM, lwr_raw_col = "EIFM_lwr_raw", upr_raw_col = "EIFM_upr_raw", al_full = al_full_EIFM)
+q4 <- make_panel(plot_subsample_combined, "EIFP_lwr", "EIFP_upr", "EIFP_mu", "tCOPP-EIF(P) (oracle)", "purple3", sofa_val_col = "sofa_val", cov_full = cov_full_EIFP, lwr_raw_col = "EIFP_lwr_raw", upr_raw_col = "EIFP_upr_raw", al_full = al_full_EIFP)
+
+##### Request-1 layout: top row = single-source proposed methods (tCOPP-W,
+##### tCOPP-EIF(I)); bottom row = federated multi-source tCOPP-EIF(M) vs. its
+##### pooled-oracle reference tCOPP-EIF(P). Each panel title now carries both CP
+##### and AL, so no separate summary table follows.
+((q1 | q2) / (q3 | q4)) +
+  patchwork::plot_annotation(
+    caption = paste(
+      sep = "\n"
+    ),
+    theme = theme(plot.caption = element_text(hjust = 0.5, size = 8))
+  )
+
+##### Request-3: the separate CP/AL summary table that used to be printed here has
+##### been removed -- coverage (CP) and average length (AL) now appear directly in
+##### each panel title above, so the standalone table only duplicated that
+##### information. (The coverage-by-outcome diagnostic table further below is kept:
+##### it breaks coverage down by survived vs. died and is a verification aid, not
+##### the CP/AL summary this request asked us to drop.)
+```
+
+
+## Constant-policy 2x2 — companion figure to the SOFA 2x2
+
+```{r plot-combined-2x2-const, fig.width=12, fig.height=9}
+##### PATCH 6 ADDENDUM: companion figure to plot-combined-2x2 above.
+##### Same 2x2 layout, same four methods, same plot conventions, but reads
+##### the all-EGDT counterfactual columns (out_lefts_egdt / out_rights_egdt)
+##### instead of the severity-adaptive ones. These _egdt columns come from the
+##### first run in each analysis block (Deta_egdt, the constant all-EGDT policy;
+##### the second run uses Deta_smooth), so this
+##### figure requires NO additional analysis runs — it just plots a different
+##### slice of the same upmcIntv outputs.
+#####
+##### To produce the all-UC version instead, swap _egdt -> _uc throughout
+##### this chunk.
+
+plotdat_const <- data.frame(
+  upmc.dead_60 = upmcIntv_blockA_W$upmc.dead_60,
+
+  # tCOPP-W under pi_e = 1 (all EGDT)
+  W_lwr    = pmin(1, pmax(0, upmcIntv_blockA_W$out_lefts_egdt)),
+  W_lwr_raw = upmcIntv_blockA_W$out_lefts_egdt,
+  W_upr    = pmin(1, pmax(0, upmcIntv_blockA_W$out_rights_egdt)),
+  W_upr_raw = upmcIntv_blockA_W$out_rights_egdt,
+  W_mu     = pmin(1, pmax(0, upmcIntv_blockA_W$mu_hat_egdt)),
+
+  # tCOPP-EIF(I) under pi_e = 1
+  EIFI_lwr = pmin(1, pmax(0, upmcIntv_blockA_EIFI$out_lefts_egdt)),
+  EIFI_lwr_raw = upmcIntv_blockA_EIFI$out_lefts_egdt,
+  EIFI_upr = pmin(1, pmax(0, upmcIntv_blockA_EIFI$out_rights_egdt)),
+  EIFI_upr_raw = upmcIntv_blockA_EIFI$out_rights_egdt,
+  EIFI_mu  = pmin(1, pmax(0, upmcIntv_blockA_EIFI$mu_hat_egdt)),
+
+  # tCOPP-EIF(M) under pi_e = 1
+  EIFM_lwr = pmin(1, pmax(0, upmcIntv_blockB$out_lefts_egdt)),
+  EIFM_lwr_raw = upmcIntv_blockB$out_lefts_egdt,
+  EIFM_upr = pmin(1, pmax(0, upmcIntv_blockB$out_rights_egdt)),
+  EIFM_upr_raw = upmcIntv_blockB$out_rights_egdt,
+  EIFM_mu  = pmin(1, pmax(0, upmcIntv_blockB$mu_hat_egdt)),
+
+  # tCOPP-EIF(P) under pi_e = 1
+  EIFP_lwr = pmin(1, pmax(0, upmcIntv_blockB$out_lefts_pool_egdt)),
+  EIFP_lwr_raw = upmcIntv_blockB$out_lefts_pool_egdt,
+  EIFP_upr = pmin(1, pmax(0, upmcIntv_blockB$out_rights_pool_egdt)),
+  EIFP_upr_raw = upmcIntv_blockB$out_rights_pool_egdt,
+  EIFP_mu  = pmin(1, pmax(0, upmcIntv_blockB$mu_hat_egdt))
+  ##### No SOFA stripe here: the constant policy does NOT depend on SOFA, so a
+  ##### severity stripe would only confuse readers (see the severity-adaptive
+  ##### figure for the stripe, where the policy actually uses SOFA).
+)
+
+plot_subsample_const <- plotdat_const[
+  order(plotdat_const$upmc.dead_60)[seq(1, nrow(plotdat_const), by = 30)], ]
+
+##### Full-population coverage for the panel titles (matches summary table)
+cov_full_const_W    <- mean(plotdat_const$W_lwr_raw    <= plotdat_const$upmc.dead_60 & plotdat_const$W_upr_raw    >= plotdat_const$upmc.dead_60, na.rm = TRUE)
+cov_full_const_EIFI <- mean(plotdat_const$EIFI_lwr_raw <= plotdat_const$upmc.dead_60 & plotdat_const$EIFI_upr_raw >= plotdat_const$upmc.dead_60, na.rm = TRUE)
+cov_full_const_EIFM <- mean(plotdat_const$EIFM_lwr_raw <= plotdat_const$upmc.dead_60 & plotdat_const$EIFM_upr_raw >= plotdat_const$upmc.dead_60, na.rm = TRUE)
+cov_full_const_EIFP <- mean(plotdat_const$EIFP_lwr_raw <= plotdat_const$upmc.dead_60 & plotdat_const$EIFP_upr_raw >= plotdat_const$upmc.dead_60, na.rm = TRUE)
+
+##### Request-3: full-population AVERAGE LENGTH (AL) per method on the
+##### [0,1]-clipped intervals, mirroring the SOFA chunk. Passed to make_panel so
+##### CP and AL both appear in each panel title (no separate summary table).
+al_full_const_W    <- mean(plotdat_const$W_upr    - plotdat_const$W_lwr,    na.rm = TRUE)
+al_full_const_EIFI <- mean(plotdat_const$EIFI_upr - plotdat_const$EIFI_lwr, na.rm = TRUE)
+al_full_const_EIFM <- mean(plotdat_const$EIFM_upr - plotdat_const$EIFM_lwr, na.rm = TRUE)
+al_full_const_EIFP <- mean(plotdat_const$EIFP_upr - plotdat_const$EIFP_lwr, na.rm = TRUE)
+
+##### Request-1: as in the SOFA figure, tCOPP-EIF(P) is the pooled oracle (title
+##### tagged "(oracle)") kept only as the bottom-right reference against the
+##### federated multi-source tCOPP-EIF(M); the top row is the two single-source
+##### proposed methods.
+c1 <- make_panel(plot_subsample_const, "W_lwr",    "W_upr",    "W_mu",    "tCOPP-W",               "limegreen",   cov_full = cov_full_const_W,    lwr_raw_col = "W_lwr_raw",    upr_raw_col = "W_upr_raw",    al_full = al_full_const_W)
+c2 <- make_panel(plot_subsample_const, "EIFI_lwr", "EIFI_upr", "EIFI_mu", "tCOPP-EIF(I)",          "deepskyblue", cov_full = cov_full_const_EIFI, lwr_raw_col = "EIFI_lwr_raw", upr_raw_col = "EIFI_upr_raw", al_full = al_full_const_EIFI)
+c3 <- make_panel(plot_subsample_const, "EIFM_lwr", "EIFM_upr", "EIFM_mu", "tCOPP-EIF(M)",          "darkorange",  cov_full = cov_full_const_EIFM, lwr_raw_col = "EIFM_lwr_raw", upr_raw_col = "EIFM_upr_raw", al_full = al_full_const_EIFM)
+c4 <- make_panel(plot_subsample_const, "EIFP_lwr", "EIFP_upr", "EIFP_mu", "tCOPP-EIF(P) (oracle)", "purple3",     cov_full = cov_full_const_EIFP, lwr_raw_col = "EIFP_lwr_raw", upr_raw_col = "EIFP_upr_raw", al_full = al_full_const_EIFP)
+
+((c1 | c2) / (c3 | c4)) +
+  patchwork::plot_annotation(
+    caption = paste(
+  
+      sep = "\n"
+    ),
+    theme = theme(plot.title   = element_text(hjust = 0.5),
+                  plot.caption = element_text(hjust = 0.5, size = 8))
+  )
+
+##### Request-3: standalone CP/AL summary table removed; CP and AL are in the
+##### panel titles above. (Coverage-by-outcome diagnostic below is retained.)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Sensitivity analysis (opt-in)
+
+The primary analysis above uses the smooth severity-adaptive evaluation
+policy $\pi_e(\text{EGDT}\mid X) = \mathrm{expit}\{\beta(\text{SOFA}-m)/s\}$
+(`Deta_smooth`, defined in the `patch6-define-policy` chunk; tune `beta_sofa`).
+
+For sensitivity, the legacy all-EGDT and all-UC policies remain available
+as `Deta_egdt` and `Deta_uc` (defined in the `patch4-define-policy` chunk
+near the top of this file). Each analysis block also has the original
+"second half" code preserved inside `if (FALSE) { ... }` — this is the
+all-UC run from the legacy code. To execute a sensitivity analysis,
+**three steps**:
+
+1. **Pick a policy** (`Deta_egdt` or `Deta_uc`) and a block (A-tCOPP-W,
+   A-tCOPP-EIF(I), or B).
+2. **Modify the relevant analysis chunk** by changing
+   `Deta <- Deta_smooth` to `Deta <- Deta_egdt` (or `Deta_uc`), re-run that
+   block, then snapshot the result with a sensitivity-suffixed name like
+   `upmcIntv_blockB_egdt <- upmcIntv`.
+3. **Plot** with a copy of the relevant plot chunk that swaps
+   `upmcIntv_blockB` for `upmcIntv_blockB_egdt`.
+
+This is intentionally manual to avoid re-running the slow analyses by
+default. A scripted version would be a useful future addition (Patch 5).
+
+```{r sensitivity-stub, eval=FALSE}
+##### EXAMPLE: Sensitivity run skeleton.
+##### To execute, set eval=TRUE on this chunk AND re-run all analysis blocks
+##### above with Deta_smooth replaced by your chosen sensitivity policy.
+
+# Step 1: Pick policy
+sensitivity_Deta <- Deta_egdt   # or Deta_uc
+
+# Step 2: Re-run an analysis block with this Deta. Easiest way: temporarily
+# alias Deta_smooth to your sensitivity policy, then re-execute the block.
+Deta_smooth_BACKUP <- Deta_smooth
+Deta_smooth      <- sensitivity_Deta
+
+# (Re-run analysis chunks here — interactive; or in a knit, use child documents.)
+
+# Step 3: Snapshot with a sensitivity-suffixed name
+# upmcIntv_blockB_egdt <- upmcIntv
+
+# Step 4: Restore primary
+Deta_smooth <- Deta_smooth_BACKUP
+```
+

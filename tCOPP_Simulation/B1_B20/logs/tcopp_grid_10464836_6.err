@@ -1,0 +1,3 @@
+
+==== task 6 : scenario (c), B=20, nrep=100, cores=32 ====
+slurmstepd: error: *** JOB 10464836 ON htc-n82 CANCELLED AT 2026-07-08T12:25:31 ***

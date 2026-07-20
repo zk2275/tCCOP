@@ -1,0 +1,406 @@
+
+==== task 5 : scenario (c), B=1, nrep=100, cores=32 ====
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+Error in f(lower, ...) : object 'alpha' not found
+  cell error: object 'alpha' not found
+  100/100 reps ok
+  wrote results/grid_c_B01.csv  (500 rows) in 0.9 min
+
+All requested tasks done.
