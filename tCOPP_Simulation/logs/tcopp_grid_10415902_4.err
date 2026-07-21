@@ -1,8 +1,0 @@
-Error: package or namespace load failed for ‘osqp’ in dyn.load(file, DLLpath = DLLpath, ...):
- unable to load shared object '/ihome/wchen/zhk22/R/x86_64-pc-linux-gnu-library/4.6/osqp/libs/osqp.so':
-  /software/rhel9/spack/install/linux-rhel9-x86_64/gcc-11.4.1/gcc-12.2.0-wwpdewq774425gjqttcipm4cyi5ihfxe/lib64/libstdc++.so.6: version `GLIBCXX_3.4.32' not found (required by /ihome/wchen/zhk22/R/x86_64-pc-linux-gnu-library/4.6/osqp/libs/osqp.so)
-In addition: Warning messages:
-1: package ‘numDeriv’ was built under R version 4.6.0 
-2: package ‘rootSolve’ was built under R version 4.6.0 
-3: package ‘osqp’ was built under R version 4.6.0 
-Execution halted

@@ -1,0 +1,23 @@
+# --- Protected data: never commit patient-level data ---
+# ProCESS trial and UPMC EHR data are restricted (PHI / data-use agreement).
+real-world*/*.csv
+tCOPP_RWD/*.csv
+**/UPMCEHRraw.csv
+**/process_4Lu*.csv
+**/siteIDdict*.csv
+
+# --- HPC / run artifacts ---
+tCOPP_Simulation/logs/
+*.out
+*.err
+slurm-*.out
+
+# --- Notebook / editor scratch ---
+.ipynb_checkpoints/
+.Rproj.user/
+.Rhistory
+.RData
+.DS_Store
+
+# --- OS / misc ---
+Thumbs.db

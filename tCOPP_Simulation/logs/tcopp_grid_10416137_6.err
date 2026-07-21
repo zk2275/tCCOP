@@ -1,6 +1,0 @@
-
-==== task 6 : scenario (c), B=20, nrep=100, cores=32 ====
-  100/100 reps ok
-  wrote results/grid_c_B20.csv  (500 rows) in 13.3 min
-
-All requested tasks done.
