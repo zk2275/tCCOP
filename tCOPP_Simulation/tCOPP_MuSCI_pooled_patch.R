@@ -501,7 +501,7 @@ print(s)
     ind1 <- which(D2$R==0 & D2$Site==1)
     ind2 <- which(D2$R==1 & D2$Site==1)
     phi <- rep(NA, length(D2$R))
-    phi[ind1] <- m_s1_val[D2_s1$R==0]-(1-alpha)/mean(D2$Site==1 & D2$R==0)
+    phi[ind1] <- (m_s1_val[D2_s1$R==0]-(1-alpha))/mean(D2$Site==1 & D2$R==0)
     phi[ind2] <- eta_s1*(I(CFS2_s1<=theta)-m_s1_val[D2_s1$R==1])/mean(D2$Site==1 & D2$R==1)
     phi[-c(ind1,ind2)] <- 0
     return(matrix(phi, ncol=1))
